@@ -1,0 +1,224 @@
+import SCC_EQUATION_ENGINE:Equation;
+import SCC_EQUATION_ENGINE:Equation_Exception;
+import SCC_EQUATION_ENGINE:Equation_Space;
+
+
+class EquationEngineExample
+   method EquationEngineExample();
+   method setGlobalVars();
+   method DoTheStuff();
+
+   /* Global variables for Award Equations */
+   property number GLB_NUMBER_1;
+   property number GLB_NUMBER_2;
+   property string GLB_STRING_1;
+   property string GLB_STRING_2;
+   
+   /* Properties used by Equation Engine */
+   property string sEqtn_OPRID;
+   property string sEqtn_EMPLID;
+   property string sEqtn_Institution;
+   property string sEqtn_RunControlID;
+   property Record recEquationRunControl;
+   property string sEquationName;
+   property string sEquationSpaceName;
+   property string sEquationResult;
+   property number nEquationAmount;
+   property array of any arrGlobalReturn;
+   
+private
+   /* Methods used to invoke the award equations */
+   method SetRunCtlKeys();
+   method SetRunCtlData();
+   method CallEquation(&sInEMPLID As string, &sInInstitution As string, &sInAidYear As string, &sInCareer As string, &sInEquationName As string) Returns number;
+   
+end-class;
+
+method EquationEngineExample
+    /* Constructor */  
+end-method;
+
+method setGlobalVars
+   %This.GLB_NUMBER_1 = 0;
+   %This.GLB_NUMBER_2 = 1;
+   %This.GLB_STRING_1 = "foo";
+   %This.GLB_STRING_2 = "bar";
+end-method;
+
+
+
+method DoTheStuff
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYearCurrent as String, +/
+   /+ &sInAidYearCalculations as String, +/
+   /+ &sInCareer as String +/
+   /+ Returns Rowset +/
+   Local Rowset &rsResults = CreateRowset(Record.UC_EXAMPLE_WRK);
+   Local Row &rResults;
+   Local string &sOutItemDescr, &sOutEquationName;
+   Local integer &i;
+   Local integer &iRS = 1;
+   
+   
+   Local SQL &sqlGetEquations = GetSQL(SQL.UC_FA_GET_EQUATIONS, &sInInstitution);
+   
+   While &sqlGetEquations.Fetch(&sOutItemDescr, &sOutEquationName)
+      
+      If &iRS > 1 Then
+         &rsResults.InsertRow(0);
+         &rResults = &rsResults.GetRow(1);
+      Else
+         &rResults = &rsResults.GetRow(1);
+      End-If;
+      
+      &rResults.UC_EXAMPLE_WRK.DESCR.Value = &sOutItemDescr;
+      &rResults.UC_EXAMPLE_WRK.UC_EXAMPLE_AWRD_EQTN.Value = &sOutEquationName;
+      
+      &iRS = &iRS + 1;
+   End-While;
+   &sqlGetAwardEquations.Close();
+   
+   For &i = 1 To &rsResults.RowCount
+      
+      If All(&rsResults(&i).UC_EXAMPLE_WRK.UC_EXAMPLE_AWRD_EQTN.Value) Then
+         &rsResults(&i).UC_EXAMPLE_WRK.UC_AMOUNT.Value = %This.CallEquation(&sInEMPLID, &sInInstitution, &sInAidYearCalculations, &sInCareer, &rsResults(&i).UC_EXAMPLE_WRK.UC_EXAMPLE_AWRD_EQTN.Value);
+      End-If;
+      
+   End-For;
+   
+   Return &rsResults;
+   
+end-method;
+
+method SetRunCtlKeys
+   
+   Local Record &recExampleParams;
+   
+   &recExampleParams = CreateRecord(Record.UC_EXAMPLE_PARAM);
+   &recExampleParams.OPRID.Value = %OperatorId;
+   
+   &recEquationRunControl = CreateRecord(Record.EQTN_RUN_CNTL);
+   &recEquationRunControl.OPRID.Value = %OperatorId;
+   &recEquationRunControl.RUN_CNTL_ID.Value = &sEqtn_RunControlID;
+   
+end-method;
+
+method SetRunCtlData
+   
+   Local Record &recExampleParams, &recExampleParams_check;
+   &recExampleParams = CreateRecord(Record.UC_EXAMPLE_PARAM);
+   &recExampleParams_check = CreateRecord(Record.UC_EXAMPLE_PARAM);
+   &recExampleParams.CopyFieldsTo(&recExampleParams_check);
+   &recExampleParams.OPRID.Value = %OperatorId;
+   If Not (&recExampleParams_check.SelectByKey()) Then
+      &recExampleParams.OPRID.Value = %OperatorId;
+      &recExampleParams.EMPLID.Value = &sEqtn_EMPLID;
+      &recExampleParams.INSTITUTION.Value = &sEqtn_Institution;
+      &recExampleParams.AID_YEAR.Value = &sEqtn_AidYear;
+      &recExampleParams.ACAD_CAREER.Value = &sEqtn_AcadCareer;
+      &recExampleParams.Insert();
+   Else
+      &recExampleParams.OPRID.Value = %OperatorId;
+      &recExampleParams.EMPLID.Value = &sEqtn_EMPLID;
+      &recExampleParams.INSTITUTION.Value = &sEqtn_Institution;
+      &recExampleParams.AID_YEAR.Value = &sEqtn_AidYear;
+      &recExampleParams.ACAD_CAREER.Value = &sEqtn_AcadCareer;
+   End-If;
+   
+   If &recEquationRunControl.SelectByKey() Then
+      /* update */
+      SQLExec("UPDATE PS_EQTN_RUN_CNTL SET EQUATION_NAME = :1 WHERE OPRID = :2 AND RUN_CNTL_ID = :3", &sEquationName, %OperatorId, &sEqtn_RunControlID);
+   Else
+      /* insert */
+      SQLExec("INSERT INTO PS_EQTN_RUN_CNTL ( OPRID, RUN_CNTL_ID, EQUATION_NAME ) VALUES ( :1, :2, :3 )", %OperatorId, &sEqtn_RunControlID, &sEquationName);
+   End-If;
+end-method;
+
+method CallEquation
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String, +/
+   /+ &sInCareer as String, +/
+   /+ &sInEquationName as String +/
+   /+ Returns Number +/
+   Local SCC_EQUATION_ENGINE:Equation &eqExampleEquation;
+   Local SCC_EQUATION_ENGINE:Equation_Space &esExampleSpace;
+   
+   &sEquationName = &sInEquationName;
+   &sEquationSpaceName = &sEquationName | "_REMOTECALL";
+   &sEqtn_RunControlID = "_EXAMPLE_";
+   Local Rowset &rs0 = GetLevel0();
+   &sEqtn_EMPLID = &sInEMPLID;
+   &sEqtn_Institution = &sInInstitution;
+   
+   &esExampleSpace = create SCC_EQUATION_ENGINE:Equation_Space();
+   &esExampleSpace.sName = &sEquationSpaceName;
+   &esExampleSpace.ClearGlobals();
+   &sEqtn_OPRID = %OperatorId;
+   &esExampleSpace.SetGlobal("EMPLID", "String", &sEqtn_EMPLID);
+   &esExampleSpace.SetGlobal("INSTITUTION", "String", &sEqtn_Institution);
+   &esExampleSpace.SetGlobal("GLB_NUMBER_1", "Number", %This.GLB_NUMBER_1);
+   &esExampleSpace.SetGlobal("GLB_NUMBER_2", "Number", %This.GLB_NUMBER_2);
+   &esExampleSpace.SetGlobal("GLB_STRING_1", "String", %This.GLB_STRING_1);
+   &esExampleSpace.SetGlobal("GLB_STRING_2", "String", %This.GLB_STRING_2);
+   
+   &eqExampleEquation = create SCC_EQUATION_ENGINE:Equation();
+   &eqExampleEquation.sName = &sEquationName;
+   &eqExampleEquation.sSpaceNameIn = &sEquationSpaceName;
+   &eqExampleEquation.sSpaceNameOut = &sEquationSpaceName;
+   &eqExampleEquation.bLogInfoMsgs = True;
+   
+   %This.SetRunCtlKeys();
+   %This.SetRunCtlData();
+   
+   DoSaveNow();
+   
+   try
+      &eqExampleEquation.Execute();
+      
+   catch SCC_EQUATION_ENGINE:Equation_Exception &eqxLoanValEqtnException;
+      If (%This.bDebugMode) Then
+         MessageBox(%MsgStyle_OK, "Equation Run Status", 14460, 302, "Equation Run Failed");
+         &eqxLoanValEqtnException.Output();
+      End-If;
+   end-try;
+   
+   If &eqExampleEquation.iMessageNumber <> 0 Then
+      If (%This.bDebugMode) Then
+         MessageBox(%MsgStyle_OK, "Equation Run Status", 14460, 302, "Equation Run Failed");
+         MessageBox(%MsgStyle_OK, "Equation Failure", &eqExampleEquation.iMessageSet, &eqExampleEquation.iMessageNumber, "Equation Run Failed");
+      End-If;
+   End-If;
+   
+   DoSaveNow();
+   
+   &esExampleSpace = create SCC_EQUATION_ENGINE:Equation_Space();
+   &esExampleSpace.sName = &sEquationSpaceName;
+   
+   &arrGlobalReturn = &esExampleSpace.GetGlobal("A_AMOUNT");
+   If &arrGlobalReturn [1] <> "Number" Then
+      
+      If (%This.bDebugMode) Then
+         MessageBox(0, "", 0, 0, "Equation " | &sEquationName | " returned a non-numeric value.");
+      End-If;
+      Return 0;
+      
+   Else
+      &nEquationAmount = &arrGlobalReturn [2];
+      REM     MessageBox(0, "", 0, 0, &arrGlobalReturn [2] | " " | String(&nEquationAmount));
+      Return &nEquationAmount;
+   End-If;
+   
+   /*  Leaving the following block of code here in case someday we need to use "A_SELECT" instead of "A_AMOUNT" */
+   /*
+   &arrGlobalReturn = &esExampleSpace.GetGlobal("A_SELECT");
+   If &arrGlobalReturn [1] <> "String" Then
+      MessageBox(0, "", 14760, 29, "Insufficient Tuition Calculation Pamareters for EMPLID %1 and Institution %2 and Term %3.", &sEqtn_EMPLID, &sEqtn_Institution, "TODO");
+   Else
+      &sEquationResult = &arrGlobalReturn [2];
+      MessageBox(0, "", 0, 0, &sEquationResult);
+   End-If;
+*/
+end-method;
+

@@ -1,0 +1,1611 @@
+/* Marc Pechaitis - 2020/02/06 */
+/* SISRP-50413 - https://jira.berkeley.edu/browse/SISRP-50413 */
+/* Allows Delegate user to access and use the page */
+
+/* Marc Pechaitis - 2019/10/23 */
+/* SISRP-48596 - https://jira.berkeley.edu/browse/SISRP-48596 */
+/* Retrieve Aid Year from config instead of URL paramter */
+
+/* Marc Pechaitis - 2018/04/19 */
+/* SISRP-40386 - https://jira.berkeley.edu/browse/SISRP-40386 */
+/* Missing GLB_ISIR_AID_YEAR equation variable */
+
+/* Marc Pechaitis - 2018/04/19 */
+/* SISRP-40015 - https://jira.berkeley.edu/browse/SISRP-40015 */
+/* Prevent graduating students from using the page */
+
+/* Marc Pechaitis - 2018/04/12 */
+/* SISRP-39909 - https://jira.berkeley.edu/browse/SISRP-39909 */
+/* Hide results grids if they are empty */
+
+/* Marc Pechaitis - 2018/04/11 */
+/* SISRP-39892 - https://jira.berkeley.edu/browse/SISRP-39892 */
+/* Summer Estimator hardcoded to calculate weeks of instruction for ONCAMPUS program only. Needs to be dynamic based on program the student selects. */
+
+
+import UC_COMMON_FLU:Constants:*;
+import UC_COMMON_FLU:StatusMessage:*;
+import UC_COMMON_FLU:Utilities:*;
+import UC_COMMON_FLU:ViewController:*;
+import UC_FA_STUDENT:Housing:*;
+import UC_FA_STUDENT:Student:*;
+import UC_FA_SM_EST_FLU:ViewController:*;
+import UC_FA_SM_EST_FLU:EFC:*;
+import SCC_EQUATION_ENGINE:Equation;
+import SCC_EQUATION_ENGINE:Equation_Exception;
+import SCC_EQUATION_ENGINE:Equation_Space;
+/* SISRP-50413 start */
+import UC_COMMON_FLU:Delegate:*;
+
+/* SISRP-50413 end */
+
+
+class Utilities extends UC_COMMON_FLU:Utilities
+   method Utilities();
+   
+   method GetDebugMode(&sInInstitution As string, &sInAidYear As string) Returns boolean;
+   
+   /* Methods called from &objViewController.Render() */
+   method GetParameters();
+   method GetTermDescr(&sInTerm As string) Returns string;
+   method GetAidYearDescr(&sInInstitution As string, &sInAidYear As string) Returns string;
+   method GetSummerProgramDescr(&sInInstitution As string, &sInAidYear As string, &sInProgramCode As string) Returns string;
+   method IsStudentHousingOptionAvailable(&sInEMPLID As string, &sInInstitution As string, &sInFallTerm As string, &sInAidYear As string, &sInHousingCode As string) Returns boolean;
+   /* SISRP-40015 start */
+   method IsStudentGraduatingThisSpring(&sInEMPLID As string, &sInInstitution As string, &sInAidYear As string) Returns boolean;
+   /* SISRP-40015 end */
+   
+   /* Methods involved in user selecting sessions */
+   method GetSessionsSelectionType(&sInInstitution As string, &sInAidYear As string, &sInProgramCode As string) Returns string;
+   method GetSessions(&sInInstitution As string, &sInAidYear As string, &sInProgramCode As string) Returns Rowset;
+   method GetMaxUnitsForProgram(&sInInstitution As string, &sInAidYear As string, &sInProgramCode As string) Returns number;
+   method GetMinUnitsForProgram(&sInInstitution As string, &sInAidYear As string, &sInProgramCode As string) Returns number;
+   
+   method EstimateAid(&sInEMPLID As string, &sInInstitution As string, &sInAidYear As string, &sInProgramCode As string, &aInSessions As array of string) Returns boolean;
+   /* SISRP-48596 start */
+   method GetAidYear(&sInInstitution As string) Returns string;
+   /* SISRP-48596 end */
+   
+   property boolean bDebugMode;
+   property string sSummerTerm;
+   property string sUpcomingFallTerm;
+   property string sUpcomingSpringTerm;
+   property string sUpcomingAidYear;
+   property string sAidYearToUseForCalculations;
+   
+   property string sProgramCode;
+   property string sProgramDescr;
+   property array of string aSessionCodes;
+   property number nMinUnitsForFA;
+   
+   property number nTotalCOATerm;
+   
+   property boolean bIsADreamer;
+   property string sNoOrIncomplete;
+   
+   /* Global variables for Award Equations */
+   property number GLB_ANTICIPATED_UNITS;
+   property number GLB_MIN_UNITS_FOR_FA;
+   property number GLB_TOTAL_SUMMER_FEES;
+   property number GLB_TOTAL_SUMMER_COA;
+   property number GLB_PELL_AMOUNT;
+   property string GLB_PROGRAM_CODE;
+   property string GLB_ISIR_AID_YEAR;
+   property number GLB_AY_EFC;
+   property number GLB_SMR_EFC;
+   
+   /* Properties used by Equation Engine */
+   property string sEqtn_OPRID;
+   property string sEqtn_EMPLID;
+   property string sEqtn_Institution;
+   property string sEqtn_AidYear;
+   property string sEqtn_AcadCareer;
+   property string sEqtn_RunControlID;
+   property Record recEquationRunControl;
+   property string sEquationName;
+   property string sEquationSpaceName;
+   property string sEquationResult;
+   property number nEquationAmount;
+   property array of any arrGlobalReturn;
+   
+private
+   /* Methods called when user clicks Estimate Aid */
+   method GetBudgetSummer(&sInInstitution As string, &sInAidYear As string, &sInProgramCode As string, &aInSessions As array of string) Returns Rowset;
+   method GetBudgetAYOrTerm(&sInEMPLID As string, &sInInstitution As string, &sInAidYear As string, &sInTerm As string) Returns Rowset;
+   method GetStudentCareer(&sInEMPLID As string, &sInInstitution As string, &sInSummerTerm As string) Returns string;
+   method GetPellEligible(&sInEMPLID As string, &sInInstitution As string, &sInCurrentAidYear As string, &sInUpcomingAidYear As string) Returns string;
+   method GetPellAmount(&sInEMPLID As string, &sInInstitution As string, &sInPellAidYear As string, &nInUnits As number, &nCOA As number, &nEFC As number) Returns number;
+   method GetHousingCode(&sInInstitution As string, &sInAidYear As string, &sInProgramCode As string) Returns string;
+   method ProcessHousing(&sInEMPLID As string, &sInInstitution As string, &sInAidYear As string, &sInCareer As string, &sInTerm As string, &sInHousingCode As string) Returns boolean;
+   method GetTermSource(&sInEMPLID As string, &sInInstitution As string, &sInTerm As string) Returns string;
+   method GetHousingNextEffseq(&sInEMPLID As string, &sInInstitution As string, &sInAidYear As string, &sInCareer As string, &sInTerm As string) Returns number;
+   method IsStudentEligibleForHousingProcess(&sInEMPLID As string, &sInInstitution As string, &sInAidYear As string, &sInUpcomingAidYear As string, &sInCareer As string, &sInTerm As string, &sInHousingCode As string) Returns boolean;
+   method GetAwardsSummer(&sInEMPLID As string, &sInInstitution As string, &sInAidYearCurrent As string, &sInAidYearCalculations As string, &sInCareer As string) Returns Rowset;
+   method GetISIRForAidYear(&sInEMPLID As string, &sInInstitution As string, &sInAidYear As string, &sInNextAidYear As string) Returns array of string;
+   method GetISIRStatusForAidYear(&sInEMPLID As string, &sInInstitution As string, &sInAidYear As string, &sInDreamerCheck As boolean) Returns string;
+   method GetAwardsAYOrTerm(&sInEMPLID As string, &sInInstitution As string, &sInAidYear As string, &sInTerm As string) Returns Rowset;
+   method CheckForFAFSAErrors(&sInEMPLID As string, &sInInstitution As string, &sInAidYear As string) Returns boolean;
+   method CheckForSatisfactoryAcadProgress(&sInEMPLID As string, &sInInstitution As string, &sInAidYear As string) Returns boolean;
+   method IsSelfServiceAwardSecurityAllowed(&sInEmplid As string, &sInInstitution As string, &sInAidYear As string) Returns boolean;
+   method GetWeeksOfInstruction(&sInInstitution As string, &sInAidYear As string, &sInProgramCode As string, &sInSessionsWhereClause As string) Returns number;
+   
+   /* Methods used to invoke the award equations */
+   method SetRunCtlKeys();
+   method SetRunCtlData();
+   method CallEquation(&sInEMPLID As string, &sInInstitution As string, &sInAidYear As string, &sInCareer As string, &sInEquationName As string) Returns number;
+   
+end-class;
+
+Component UC_COMMON_FLU:Constants &objConstants;
+Component UC_COMMON_FLU:StatusMessage &objStatusMessage;
+Component UC_FA_STUDENT:Student &objStudent;
+Component UC_FA_SM_EST_FLU:ViewController &objViewController;
+/* SISRP-50413 start */
+Component UC_COMMON_FLU:Delegate &objDelegate;
+/* SISRP-50413 end */
+
+
+Declare Function TestPushButton PeopleCode FUNCLIB_FA.EQTN_PROC_FUNCS FieldFormula;
+
+method Utilities
+   /+ Extends/implements UC_COMMON_FLU:Utilities.Utilities +/
+   /* Constructor */
+   %Super = create UC_COMMON_FLU:Utilities();
+   
+end-method;
+
+/* SISRP-50413 start */
+method GetParameters
+   
+   If All(UC_SS_PERS_SRCH.EMPLID.Value) Then
+      &objStudent = create UC_FA_STUDENT:Student(UC_SS_PERS_SRCH.EMPLID.Value);
+      &objDelegate.bIsDelegate = False;
+   Else
+      &objDelegate.iNumberOfDelegates = &objDelegate.GetNbrOfIdsForDelegate();
+      If &objDelegate.iNumberOfDelegates > 0 Then
+         &objStudent = create UC_FA_STUDENT:Student(&objDelegate.GetIdForDelegate());
+         &objDelegate.bIsDelegate = True;
+      End-If;
+   End-If;
+   
+   /* SISRP-50413 end */
+   &objStudent.Institution = %Request.GetParameter("ucInstitution");
+   &objStudent.AidYear = %This.GetAidYear(&objStudent.Institution);
+end-method;
+
+method GetDebugMode
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String +/
+   /+ Returns Boolean +/
+   
+   Local string &sResult = "";
+   Local boolean &bDummy;
+   Local boolean &bResult = False;
+   
+   Local SQL &sqlGetDebug = GetSQL(SQL.UC_FA_GET_SM_EST_DEBUG, &sInInstitution, &sInAidYear);
+   
+   &bDummy = &sqlGetDebug.Fetch(&sResult);
+   &sqlGetDebug.Close();
+   
+   If All(&sResult) Then
+      &bResult = True;
+   End-If;
+   
+   Return &bResult;
+   
+end-method;
+
+method GetAidYearDescr
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String +/
+   /+ Returns String +/
+   
+   Local string &sResult = "";
+   Local boolean &bDummy;
+   
+   Local SQL &sqlGetAidYearDescr = GetSQL(SQL.UC_FA_GET_AID_YEAR_DESCR, &sInInstitution, &sInAidYear);
+   
+   &bDummy = &sqlGetAidYearDescr.Fetch(&sResult);
+   &sqlGetAidYearDescr.Close();
+   
+   Return &sResult;
+   
+end-method;
+
+method GetSummerProgramDescr
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String, +/
+   /+ &sInProgramCode as String +/
+   /+ Returns String +/
+   
+   Local string &sResult = "";
+   Local boolean &bDummy;
+   
+   Local SQL &sqlGetAidYearDescr = GetSQL(SQL.UC_FA_GET_SM_PROGRAM_DESCR, &sInInstitution, &sInAidYear, &sInProgramCode);
+   
+   &bDummy = &sqlGetAidYearDescr.Fetch(&sResult);
+   &sqlGetAidYearDescr.Close();
+   
+   Return &sResult;
+   
+end-method;
+
+method IsStudentHousingOptionAvailable
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInFallTerm as String, +/
+   /+ &sInAidYear as String, +/
+   /+ &sInHousingCode as String +/
+   /+ Returns Boolean +/
+   
+   Local string &sResult = "";
+   Local boolean &bDummy;
+   
+   Local SQL &sqlIsStudentHousingOptionAvailable = GetSQL(SQL.UC_FA_IS_STDNT_HOUSING_OPT, &sInEMPLID, &sInInstitution, &sInFallTerm, &sInAidYear, &sInHousingCode);
+   
+   &bDummy = &sqlIsStudentHousingOptionAvailable.Fetch(&sResult);
+   &sqlIsStudentHousingOptionAvailable.Close();
+   
+   If All(&sResult) Then
+      Return True;
+   Else
+      Return False;
+   End-If;
+   
+end-method;
+
+/* SISRP-40015 start */
+method IsStudentGraduatingThisSpring
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String +/
+   /+ Returns Boolean +/
+   
+   Local string &sResult = "";
+   Local boolean &bDummy;
+   
+   /* We need to calculate the value for the fall and spring terms for the Aid Year passed into this method */
+   /* Local string &sThisFall = Substring(&sInAidYear, 1, 1) | String(Value(Substring(&sInAidYear, 3, 2)) - 1) | &objConstants.k_strTermSuffixFall; */
+   Local string &sThisSpring = Substring(&sInAidYear, 1, 1) | Substring(&sInAidYear, 3, 2) | &objConstants.k_strTermSuffixSpring;
+   
+   Local SQL &sqlIsStudentGraduating = GetSQL(SQL.UC_FA_IS_STDNT_GRADUATING, &sInEMPLID, &sInInstitution, &sInAidYear);
+   
+   &bDummy = &sqlIsStudentGraduating.Fetch(&sResult);
+   &sqlIsStudentGraduating.Close();
+   
+   If (All(&sResult) And
+         (&sResult <= &sThisSpring)) Then
+      Return True;
+   Else
+      Return False;
+   End-If;
+   
+end-method;
+
+/* SISRP-40015 end */
+
+method GetISIRForAidYear
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String, +/
+   /+ &sInNextAidYear as String +/
+   /+ Returns Array of String +/
+   
+   Local boolean &bDummy;
+   Local string &sAidYear = "";
+   Local string &sEFCStatus = "";
+   Local string &sOutAidYear = "";
+   Local string &sOutEFCStatus = "";
+   Local array of string &aResult;
+   
+   Local SQL &sqlGetISIRForAidYear = GetSQL(SQL.UC_FA_GET_ISIR_FOR_AID_YEAR, &sInEMPLID, &sInInstitution, &sInAidYear, &sInNextAidYear);
+   
+   rem  &bDummy = &sqlGetISIRForAidYear.Fetch(&sOutAidYear, &sOutEFCStatus);
+   
+   While &sqlGetISIRForAidYear.Fetch(&sAidYear, &sEFCStatus)
+      /* The data is being returned in DESCending order, by aid year.  So looping through the results we will assign the Aid Year value to the more recent one when we're done with the loop */
+      Evaluate &sEFCStatus
+      When = "O"
+      When = "U"
+         /* Offical/Unofficial - ok to proceed with summer award calculation */
+         %This.sAidYearToUseForCalculations = &sAidYear;
+         Break;
+      When-Other;
+         
+         Break;
+      End-Evaluate;
+      
+   End-While;
+   
+   &sqlGetISIRForAidYear.Close();
+   
+   /* Assume student has data on the Fed ISIR records so s/he is a not Dreamer */
+   %This.bIsADreamer = False;
+   
+   If (All(&sOutAidYear) And
+         All(&sOutEFCStatus)) Then
+      /* We find fed ISIR data so we do not need to check any further */
+   Else
+      /* We did not find a row on PS_ISIR_CONTROL, check CSU_CGI_CONTROL */
+      Local SQL &sqlGetCISIRForAidYear = GetSQL(SQL.UC_FA_GET_CISIR_FOR_AID_YEAR, &sInEMPLID, &sInInstitution, &sInAidYear, &sInNextAidYear);
+      
+      &bDummy = &sqlGetCISIRForAidYear.Fetch(&sOutAidYear, &sOutEFCStatus);
+      &sqlGetCISIRForAidYear.Close();
+      
+      If (All(&sOutAidYear) And
+            All(&sOutEFCStatus)) Then
+         /* Student does not have data on the Fed ISIR records, but does on the Cal ISIR records, so s/he is a Dreamer */
+         %This.bIsADreamer = True;
+      End-If;
+   End-If;
+   
+   
+   &aResult = CreateArray(&sOutAidYear, &sOutEFCStatus);
+   
+   Return &aResult;
+   
+end-method;
+
+method GetSessions
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String, +/
+   /+ &sInProgramCode as String +/
+   /+ Returns Rowset +/
+   
+   Local Rowset &rsResults;
+   &rsResults = CreateRowset(Record.UC_FA_SM_SESS); /* name of the Source View goes here */
+   &rsResults.Flush();
+   &rsResults.Fill(" WHERE FILL.INSTITUTION = :1 AND FILL.AID_YEAR = :2 AND FILL.EFFDT = (SELECT MAX(FILL2.EFFDT) FROM PS_UC_FA_SM_SESS FILL2 WHERE FILL2.INSTITUTION = FILL.INSTITUTION AND FILL2.AID_YEAR = FILL.AID_YEAR AND FILL2.EFFDT <= SYSDATE) AND FILL.UC_FA_SM_PROG_CODE = :3 ORDER BY FILL.DESCR", &sInInstitution, &sInAidYear, &sInProgramCode);
+   Return &rsResults;
+   
+end-method;
+
+method GetSessionsSelectionType
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String, +/
+   /+ &sInProgramCode as String +/
+   /+ Returns String +/
+   
+   Local string &sResult = "";
+   Local boolean &bDummy;
+   
+   Local SQL &sqlGetSessionSelectionType = GetSQL(SQL.UC_FA_GET_SESSION_SELECT_TYPE, &sInInstitution, &sInAidYear, &sInProgramCode);
+   
+   &bDummy = &sqlGetSessionSelectionType.Fetch(&sResult);
+   &sqlGetSessionSelectionType.Close();
+   
+   Return &sResult;
+   
+end-method;
+
+method GetMaxUnitsForProgram
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String, +/
+   /+ &sInProgramCode as String +/
+   /+ Returns Number +/
+   
+   Local number &iResult = 0;
+   Local boolean &bDummy;
+   Local SQL &sqlGetMaxUnitsForProgram = GetSQL(SQL.UC_FA_GET_MAX_UNITS_PROGRAM, &sInInstitution, &sInAidYear, &sInProgramCode);
+   
+   &bDummy = &sqlGetMaxUnitsForProgram.Fetch(&iResult);
+   &sqlGetMaxUnitsForProgram.Close();
+   
+   Return &iResult;
+   
+end-method;
+
+method GetMinUnitsForProgram
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String, +/
+   /+ &sInProgramCode as String +/
+   /+ Returns Number +/
+   
+   Local number &iResult = 0;
+   Local boolean &bDummy;
+   Local SQL &sqlGetMaxUnitsForProgram = GetSQL(SQL.UC_FA_GET_MIN_UNITS_PROGRAM, &sInInstitution, &sInAidYear, &sInProgramCode);
+   
+   &bDummy = &sqlGetMaxUnitsForProgram.Fetch(&iResult);
+   &sqlGetMaxUnitsForProgram.Close();
+   
+   Return &iResult;
+   
+end-method;
+
+method EstimateAid
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String, +/
+   /+ &sInProgramCode as String, +/
+   /+ &aInSessions as Array of String +/
+   /+ Returns Boolean +/
+   
+   Local boolean &bResult = True;
+   Local number &nAmount = 0;
+   
+   /* Get awards for the summer award - requires student's career */
+   Local string &sCareer = %This.GetStudentCareer(&sInEMPLID, &sInInstitution, %This.sSummerTerm);
+   
+   /* Get awards for summer award - needed to calculate Pell Amount */
+   Local string &sPellAidYear = %This.GetPellEligible(&sInEMPLID, &sInInstitution, &objStudent.AidYear, %This.sUpcomingAidYear);
+   
+   /* Get budget for the selected session(s) */
+   Local Rowset &rsBudgetSummer = %This.GetBudgetSummer(&sInInstitution, &sInAidYear, &sInProgramCode, &aInSessions);
+   &nAmount = &objViewController.BuildResultsGrid(&rsBudgetSummer, "UC_FA_SM_COASUM", "COA", True);
+   Local Field &fResultsSummerCOAGroup = GetLevel0().GetRow(1).GetRecord(Record.UC_FA_SM_ESTWRK).GetField(Field.UC_GROUPBOX10);
+   If &nAmount > 0 Then
+      &objViewController.FieldShow(&fResultsSummerCOAGroup);
+   Else
+      &objViewController.FieldHide(&fResultsSummerCOAGroup);
+   End-If;
+   
+   /* Get Awards for the summer session */
+   /* 1) Determine if student has ISIR for current or upcoming aid year */
+   Local Field &fSummerCOAandAwardsGroup = GetLevel0().GetRow(1).GetRecord(Record.UC_FA_SM_ESTWRK).GetField(Field.UC_GROUPBOX12);
+   Local string &sCurrentAidYearDescr = %This.GetAidYearDescr(&sInInstitution, &sInAidYear);
+   Local string &sUpcomingAidYearDescr = %This.GetAidYearDescr(&sInInstitution, %This.sUpcomingAidYear);
+   
+   
+   If (%This.CheckForFAFSAErrors(&sInEMPLID, &sInInstitution, &sInAidYear)) Then
+      /* Display status message to student and do not display the Summer Awards grid */
+      &objStatusMessage.recUC_STATUSMSGDVW.MESSAGE_SET_NBR.Value = 26502;
+      &objStatusMessage.recUC_STATUSMSGDVW.MESSAGE_NBR.Value = 7;
+      &objStatusMessage.recUC_STATUSMSGDVW.MSG_SEVERITY.Value = "W";
+      &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_1.Value = %This.sNoOrIncomplete;
+      &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_2.Value = &sCurrentAidYearDescr;
+      &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_3.Value = "";
+      &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_4.Value = "";
+      &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_5.Value = "";
+      &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_6.Value = "";
+      &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_7.Value = "";
+      &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_8.Value = "";
+      &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_9.Value = "";
+      &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER10.Value = "";
+      &objStatusMessage.recUC_STATUSMSGDVW.DESCRLONG.Value = "Due to " | %This.sNoOrIncomplete | " application for financial aid on file, we are unable to estimate your aid for summer. Please complete a " | &sCurrentAidYearDescr | " Federal Application for Federal Student Aid (FAFSA) or " | &sCurrentAidYearDescr | " California Dream Act Application.";
+      &objStatusMessage.AddToMultipleStatusMessageRowset(&objStatusMessage.recUC_STATUSMSGDVW);
+      
+      /* Since we are not displaying the Summer Awards grid, we need to add the following style to make the single COA grid centered */
+      &fSummerCOAandAwardsGroup.AddFFClass("uc-max-width-300px");
+   Else
+      If (%This.CheckForSatisfactoryAcadProgress(&sInEMPLID, &sInInstitution, %This.sAidYearToUseForCalculations)) Then
+         If (%This.GLB_ANTICIPATED_UNITS >= %This.GLB_MIN_UNITS_FOR_FA) Then
+            If All(&sCareer) Then
+               
+               If (%This.sAidYearToUseForCalculations <> &objStudent.AidYear) Then
+                  rem   &objStatusMessage.recUC_STATUSMSGDVW.SetDefault();
+                  &objStatusMessage.recUC_STATUSMSGDVW.MESSAGE_SET_NBR.Value = 26502;
+                  &objStatusMessage.recUC_STATUSMSGDVW.MESSAGE_NBR.Value = 20;
+                  &objStatusMessage.recUC_STATUSMSGDVW.MSG_SEVERITY.Value = "W";
+                  &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_1.Value = %This.GetAidYearDescr(&sInInstitution, &objStudent.AidYear);
+                  &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_2.Value = %This.GetAidYearDescr(&sInInstitution, %This.sUpcomingAidYear);
+                  &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_3.Value = "";
+                  &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_4.Value = "";
+                  &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_5.Value = "";
+                  &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_6.Value = "";
+                  &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_7.Value = "";
+                  &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_8.Value = "";
+                  &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_9.Value = "";
+                  &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER10.Value = "";
+                  &objStatusMessage.recUC_STATUSMSGDVW.DESCRLONG.Value = "We cannot use this year's data, so the following estimate was generated using next year's data.";
+                  &objStatusMessage.AddToMultipleStatusMessageRowset(&objStatusMessage.recUC_STATUSMSGDVW);
+                  
+               End-If;
+               
+               /* Set (some of) the global variable for Award Equations */
+               Local UC_FA_SM_EST_FLU:EFC &objEFC;
+               &objEFC = create UC_FA_SM_EST_FLU:EFC();
+               
+               %This.GLB_AY_EFC = &objEFC.GetEFC(&objStudent.EMPLID, &objStudent.Institution, %This.sAidYearToUseForCalculations);
+               %This.GLB_ISIR_AID_YEAR = %This.sAidYearToUseForCalculations;
+               
+               If All(&sPellAidYear) Then
+                  If (&sPellAidYear <> &objStudent.AidYear) Then
+                     /* TODO - Display message that has to very strongly convey that we used upcoming aid year information to estimate summer aid, but a student's actual summer eligibility may be different using the current aid year information. */
+                  End-If;
+                  
+                  /* 2) Get Prorated EFC and Pell Amount (for non dreamers) and assign to Global Variable */
+                  If %This.bIsADreamer Then
+                     %This.GLB_SMR_EFC = 0;
+                     %This.GLB_PELL_AMOUNT = 0;
+                  Else
+                     %This.GLB_SMR_EFC = &objEFC.GetProratedEFC(&objStudent.EMPLID, &objStudent.Institution, %This.sAidYearToUseForCalculations, %This.bIsADreamer);
+                     /* 20130329 - Dennis Haugland: "We should always use the current year Pell amount even when using the efc for the upcoming aid year." - replace Aid Year in following line */
+                     /* %This.GLB_PELL_AMOUNT = %This.GetPellAmount(&sInEMPLID, &sInInstitution, %This.sAidYearToUseForCalculations, %This.GLB_ANTICIPATED_UNITS, %This.GLB_TOTAL_SUMMER_COA, %This.GLB_AY_EFC); */
+                     %This.GLB_PELL_AMOUNT = %This.GetPellAmount(&sInEMPLID, &sInInstitution, &sInAidYear, %This.GLB_ANTICIPATED_UNITS, %This.GLB_TOTAL_SUMMER_COA, %This.GLB_AY_EFC);
+                  End-If;
+                  
+               Else
+                  /* Pell Amount is blank */
+                  
+                  %This.GLB_PELL_AMOUNT = 0;
+               End-If;
+               
+               
+               /* 3) If the program the student selected has a Housing Code configured, we need to invoke the Housing process */
+               Local boolean &bDisplayAYAndTermResultsGrids = True;
+               Local string &sHousingCode = %This.GetHousingCode(&sInInstitution, &sInAidYear, %This.GLB_PROGRAM_CODE);
+               If All(&sHousingCode) Then
+                  
+                  /* Does the student already have existing housing option that matches the one s/he is processing? */
+                  Local string &sHousingSame = "";
+                  Local SQL &sqlHousingSameAlready = GetSQL(SQL.UC_FA_HOUSING_SAME_ALREADY, &sInEMPLID, &sInInstitution, %This.sUpcomingAidYear, &sCareer, %This.sUpcomingFallTerm, &sHousingCode);
+                  
+                  Local boolean &bDummy = &sqlHousingSameAlready.Fetch(&sHousingSame);
+                  &sqlHousingSameAlready.Close();
+                  
+                  If (None(&sHousingSame)) Then
+                     /* We do not want to invoke the housing process if student already has the same housing code already */
+                     
+                     If (%This.ProcessHousing(&sInEMPLID, &sInInstitution, %This.sUpcomingAidYear, &sCareer, %This.sUpcomingFallTerm, &sHousingCode)) Then
+                        &objStatusMessage.recUC_STATUSMSGDVW.MESSAGE_SET_NBR.Value = 26502;
+                        &objStatusMessage.recUC_STATUSMSGDVW.MESSAGE_NBR.Value = 18;
+                        &objStatusMessage.recUC_STATUSMSGDVW.MSG_SEVERITY.Value = "W";
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_1.Value = %This.sProgramDescr;
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_2.Value = %This.GetAidYearDescr(&sInInstitution, %This.sUpcomingAidYear);
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_3.Value = "";
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_4.Value = "";
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_5.Value = "";
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_6.Value = "";
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_7.Value = "";
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_8.Value = "";
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_9.Value = "";
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER10.Value = "";
+                        &objStatusMessage.recUC_STATUSMSGDVW.DESCRLONG.Value = "We updated your financial aid package.";
+                        &objStatusMessage.AddToMultipleStatusMessageRowset(&objStatusMessage.recUC_STATUSMSGDVW);
+                     Else
+                        /* For some reason the process failed, and we need to prevent the Aid Year and Term results grids from being displayed on the bottom of the page */
+                        &bDisplayAYAndTermResultsGrids = False;
+                        &objStatusMessage.recUC_STATUSMSGDVW.MESSAGE_SET_NBR.Value = 26502;
+                        &objStatusMessage.recUC_STATUSMSGDVW.MESSAGE_NBR.Value = 19;
+                        &objStatusMessage.recUC_STATUSMSGDVW.MSG_SEVERITY.Value = "W";
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_1.Value = "";
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_2.Value = "";
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_3.Value = "";
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_4.Value = "";
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_5.Value = "";
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_6.Value = "";
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_7.Value = "";
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_8.Value = "";
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_9.Value = "";
+                        &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER10.Value = "";
+                        &objStatusMessage.recUC_STATUSMSGDVW.DESCRLONG.Value = "Housing process unsuccessful.";
+                        &objStatusMessage.AddToMultipleStatusMessageRowset(&objStatusMessage.recUC_STATUSMSGDVW);
+                     End-If;
+                  End-If;
+               End-If;
+               /* 4) Proceed with Summer Award calculation */
+               Local Rowset &rsAwardSummer = %This.GetAwardsSummer(&sInEMPLID, &sInInstitution, &sInAidYear, %This.sAidYearToUseForCalculations, &sCareer);
+               &nAmount = &objViewController.BuildResultsGrid(&rsAwardSummer, "UC_FA_SM_AWDSUM", "AWD", True);
+               Local Field &fResultsSummerAWDGroup = GetLevel0().GetRow(1).GetRecord(Record.UC_FA_SM_ESTWRK).GetField(Field.UC_GROUPBOX11);
+               If &nAmount > 0 Then
+                  &objViewController.FieldShow(&fResultsSummerAWDGroup);
+               Else
+                  &objViewController.FieldHide(&fResultsSummerAWDGroup);
+               End-If;
+               
+            Else
+               /* Handle no career */
+               &objStatusMessage.recUC_STATUSMSGDVW.MESSAGE_SET_NBR.Value = 26502;
+               &objStatusMessage.recUC_STATUSMSGDVW.MESSAGE_NBR.Value = 22;
+               &objStatusMessage.recUC_STATUSMSGDVW.MSG_SEVERITY.Value = "E";
+               &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_1.Value = "";
+               &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_2.Value = "";
+               &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_3.Value = "";
+               &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_4.Value = "";
+               &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_5.Value = "";
+               &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_6.Value = "";
+               &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_7.Value = "";
+               &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_8.Value = "";
+               &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_9.Value = "";
+               &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER10.Value = "";
+               &objStatusMessage.recUC_STATUSMSGDVW.DESCRLONG.Value = "Housing process unsuccessful.";
+               &objStatusMessage.AddToMultipleStatusMessageRowset(&objStatusMessage.recUC_STATUSMSGDVW);
+               If (%This.bDebugMode) Then
+                  MessageBox(0, "", 0, 0, "Summer Awarding not successful.  No career found for student in this summer, previous spring or next fall terms.");
+               End-If;
+               
+            End-If;
+         Else
+            /* Student entered less than the minimum number of units for the program to qualify for aid */
+            /* Display status message to student and do not display the Summer Awards grid */
+            &objStatusMessage.recUC_STATUSMSGDVW.MESSAGE_SET_NBR.Value = 26502;
+            &objStatusMessage.recUC_STATUSMSGDVW.MESSAGE_NBR.Value = 23;
+            &objStatusMessage.recUC_STATUSMSGDVW.MSG_SEVERITY.Value = "W";
+            &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_1.Value = %This.GLB_MIN_UNITS_FOR_FA;
+            &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_2.Value = "";
+            &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_3.Value = "";
+            &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_4.Value = "";
+            &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_5.Value = "";
+            &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_6.Value = "";
+            &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_7.Value = "";
+            &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_8.Value = "";
+            &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_9.Value = "";
+            &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER10.Value = "";
+            &objStatusMessage.recUC_STATUSMSGDVW.DESCRLONG.Value = "In order to qualify for Financial Aid you must take a minimum of " | %This.GLB_MIN_UNITS_FOR_FA | " units.";
+            &objStatusMessage.AddToMultipleStatusMessageRowset(&objStatusMessage.recUC_STATUSMSGDVW);
+            &objViewController.FieldShow(&objViewController.fStatusMessageGroup);
+            
+            /* Since we are not displaying the Summer Awards grid, we need to add the following style to make the single COA grid centered */
+            &fSummerCOAandAwardsGroup.AddFFClass("uc-max-width-300px");
+         End-If;
+      Else
+         /* Student is not meeting Satisfacory Academic Progress */
+         /* Display status message to student and do not display the Summer Awards grid */
+         &objStatusMessage.recUC_STATUSMSGDVW.MESSAGE_SET_NBR.Value = 26502;
+         &objStatusMessage.recUC_STATUSMSGDVW.MESSAGE_NBR.Value = 17;
+         &objStatusMessage.recUC_STATUSMSGDVW.MSG_SEVERITY.Value = "W";
+         &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_1.Value = %This.GetAidYearDescr(&objStudent.Institution, &objStudent.AidYear);
+         &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_2.Value = "";
+         &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_3.Value = "";
+         &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_4.Value = "";
+         &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_5.Value = "";
+         &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_6.Value = "";
+         &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_7.Value = "";
+         &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_8.Value = "";
+         &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER_9.Value = "";
+         &objStatusMessage.recUC_STATUSMSGDVW.UC_MSG_PARAMETER10.Value = "";
+         &objStatusMessage.recUC_STATUSMSGDVW.DESCRLONG.Value = "You are not meeting Satisfactory Academic Progress and not eligible to receive an estimate of your summer financial aid.";
+         &objStatusMessage.AddToMultipleStatusMessageRowset(&objStatusMessage.recUC_STATUSMSGDVW);
+         REM    &objStatusMessage.DisplayStatusMessage(26502, 17, "You are not meeting Satisfactory Academic Progress and not eligible to receive an estimate of your summer financial aid.", "E", "", "", "", "", "", "", "", "", "", "");
+         &objViewController.FieldShow(&objViewController.fStatusMessageGroup);
+         
+         /* Since we are not displaying the Summer Awards grid, we need to add the following style to make the single COA grid centered */
+         &fSummerCOAandAwardsGroup.AddFFClass("uc-max-width-300px");
+      End-If;
+      
+   End-If;
+   
+   /* SISRP-39909 start */
+   Local Field &fResultsCOAandBudgetAYGroup = GetLevel0().GetRow(1).GetRecord(Record.UC_FA_SM_ESTWRK).GetField(Field.UC_GROUPBOX13);
+   Local Field &fResultsCOAandBudgetFallGroup = GetLevel0().GetRow(1).GetRecord(Record.UC_FA_SM_ESTWRK).GetField(Field.UC_GROUPBOX16);
+   Local Field &fResultsCOAandBudgetSpringGroup = GetLevel0().GetRow(1).GetRecord(Record.UC_FA_SM_ESTWRK).GetField(Field.UC_GROUPBOX19);
+   Local Field &fButtonAYorSpringToggle = GetLevel0().GetRow(1).GetRecord(Record.UC_FA_SM_ESTWRK).GetField(Field.UC_PB_02);
+   /* SISRP-39909 end */
+   
+   If ((&bDisplayAYAndTermResultsGrids) And
+         (%This.IsSelfServiceAwardSecurityAllowed(&sInEMPLID, &sInInstitution, %This.sUpcomingAidYear))) Then
+      &objViewController.FieldShow(&fButtonAYorSpringToggle);
+      
+      /* Get COA for the upcoming Aid Year */
+      Local Rowset &rsBudgetAY = %This.GetBudgetAYOrTerm(&sInEMPLID, &sInInstitution, %This.sUpcomingAidYear, " ");
+      &nAmount = &objViewController.BuildResultsGrid(&rsBudgetAY, "UC_FA_SM_COA_AY", "COA", False);
+      
+      Local Field &fResultsBudgetAYGroup = GetLevel0().GetRow(1).GetRecord(Record.UC_FA_SM_ESTWRK).GetField(Field.UC_GROUPBOX14);
+      If &nAmount > 0 Then
+         &objViewController.FieldShow(&fResultsCOAandBudgetAYGroup);
+         &objViewController.FieldShow(&fResultsBudgetAYGroup);
+      Else
+         &objViewController.FieldHide(&fResultsBudgetAYGroup);
+         &fResultsCOAandBudgetAYGroup.AddFFClass("uc-max-width-300px");
+      End-If;
+      
+      /* Get Awards for the upcoming Aid Year */
+      Local Rowset &rsAwardsAY = %This.GetAwardsAYOrTerm(&sInEMPLID, &sInInstitution, %This.sUpcomingAidYear, " ");
+      &nAmount = &objViewController.BuildResultsGrid(&rsAwardsAY, "UC_FA_SM_AWD_AY", "AWD", False);
+      Local Field &fResultAwardsAYGroup = GetLevel0().GetRow(1).GetRecord(Record.UC_FA_SM_ESTWRK).GetField(Field.UC_GROUPBOX15);
+      If &nAmount > 0 Then
+         &objViewController.FieldShow(&fResultsCOAandBudgetAYGroup);
+         &objViewController.FieldShow(&fResultAwardsAYGroup);
+      Else
+         &objViewController.FieldHide(&fResultAwardsAYGroup);
+         &fResultsCOAandBudgetAYGroup.AddFFClass("uc-max-width-300px");
+         /* SISRP-39909 start */
+         /* 20180413 - Dennis Haugland: "Scenarios: #1 If No Awards and No Budget, student should see nothing.  #2:  No Awards, but there is a budget, student should see nothing.  #3:  There are awards, but no budget, student should see awards." */
+         &objViewController.FieldHide(&fResultsCOAandBudgetAYGroup);
+         &objViewController.FieldHide(&fResultsCOAandBudgetFallGroup);
+         &objViewController.FieldHide(&fResultsCOAandBudgetSpringGroup);
+         &objViewController.FieldHide(&fButtonAYorSpringToggle);
+         /* SISRP-39909 start */
+      End-If;
+      
+      /* Get COA for the upcoming Fall Term */
+      Local Rowset &rsBudgetFall = %This.GetBudgetAYOrTerm(&sInEMPLID, &sInInstitution, %This.sUpcomingAidYear, %This.sUpcomingFallTerm);
+      &nAmount = &objViewController.BuildResultsGrid(&rsBudgetFall, "UC_FA_SM_COAFAL", "COA", False);
+      Local Field &fResultsBudgetFallGroup = GetLevel0().GetRow(1).GetRecord(Record.UC_FA_SM_ESTWRK).GetField(Field.UC_GROUPBOX17);
+      If &nAmount > 0 Then
+         &objViewController.FieldShow(&fResultsCOAandBudgetFallGroup);
+         &objViewController.FieldShow(&fResultsBudgetFallGroup);
+      Else
+         &objViewController.FieldHide(&fResultsBudgetFallGroup);
+         &fResultsCOAandBudgetFallGroup.AddFFClass("uc-max-width-300px");
+      End-If;
+      
+      /* Get Awards for the upcoming Fall Term */
+      Local Rowset &rsAwardsFall = %This.GetAwardsAYOrTerm(&sInEMPLID, &sInInstitution, %This.sUpcomingAidYear, %This.sUpcomingFallTerm);
+      &nAmount = &objViewController.BuildResultsGrid(&rsAwardsFall, "UC_FA_SM_AWDFAL", "AWD", False);
+      Local Field &fResultsAwardsFallGroup = GetLevel0().GetRow(1).GetRecord(Record.UC_FA_SM_ESTWRK).GetField(Field.UC_GROUPBOX18);
+      If &nAmount > 0 Then
+         &objViewController.FieldShow(&fResultsCOAandBudgetSpringGroup);
+         &objViewController.FieldShow(&fResultsAwardsFallGroup);
+      Else
+         &objViewController.FieldHide(&fResultsAwardsFallGroup);
+         &fResultsCOAandBudgetFallGroup.AddFFClass("uc-max-width-300px");
+      End-If;
+      
+      
+      /* Get COA for the upcoming Spring Term */
+      Local Rowset &rsBudgetSpring = %This.GetBudgetAYOrTerm(&sInEMPLID, &sInInstitution, %This.sUpcomingAidYear, %This.sUpcomingSpringTerm);
+      &nAmount = &objViewController.BuildResultsGrid(&rsBudgetSpring, "UC_FA_SM_COASPR", "COA", False);
+      Local Field &fResultsBudgetSpringGroup = GetLevel0().GetRow(1).GetRecord(Record.UC_FA_SM_ESTWRK).GetField(Field.UC_GROUPBOX20);
+      If &nAmount > 0 Then
+         &objViewController.FieldShow(&fResultsCOAandBudgetSpringGroup);
+         &objViewController.FieldShow(&fResultsBudgetSpringGroup);
+      Else
+         &objViewController.FieldHide(&fResultsBudgetSpringGroup);
+         &fResultsCOAandBudgetSpringGroup.AddFFClass("uc-max-width-300px");
+      End-If;
+      
+      /* Get Awards for the upcoming Spring Term */
+      Local Rowset &rsAwardsSpring = %This.GetAwardsAYOrTerm(&sInEMPLID, &sInInstitution, %This.sUpcomingAidYear, %This.sUpcomingSpringTerm);
+      &nAmount = &objViewController.BuildResultsGrid(&rsAwardsSpring, "UC_FA_SM_AWDSPR", "AWD", False);
+      Local Field &fResultsAwardsSpringGroup = GetLevel0().GetRow(1).GetRecord(Record.UC_FA_SM_ESTWRK).GetField(Field.UC_GROUPBOX21);
+      If &nAmount > 0 Then
+         &objViewController.FieldShow(&fResultsCOAandBudgetSpringGroup);
+         &objViewController.FieldShow(&fResultsAwardsSpringGroup);
+      Else
+         &objViewController.FieldHide(&fResultsBudgetSpringGroup);
+         &fResultsCOAandBudgetSpringGroup.AddFFClass("uc-max-width-300px");
+      End-If;
+      
+      /* SISRP-39909 start */
+   Else
+      &objViewController.FieldHide(&fResultsCOAandBudgetAYGroup);
+      &objViewController.FieldHide(&fResultsCOAandBudgetFallGroup);
+      &objViewController.FieldHide(&fResultsCOAandBudgetSpringGroup);
+      &objViewController.FieldHide(&fButtonAYorSpringToggle);
+      /* SISRP-39909 end */
+      
+   End-If;
+   
+   Return &bResult;
+   
+end-method;
+
+method GetBudgetSummer
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String, +/
+   /+ &sInProgramCode as String, +/
+   /+ &aInSessions as Array of String +/
+   /+ Returns Rowset +/
+   
+   Local Rowset &rsResults = CreateRowset(Record.UC_FA_SM_ESTAMT);
+   Local Row &rResults;
+   Local string &sSessionsWhereClause = "";
+   Local integer &i;
+   
+   /* Build a string to use in the where clause that includes all of the session codes passed in via the array */
+   For &i = 1 To &aInSessions.Len
+      &sSessionsWhereClause = &sSessionsWhereClause | &aInSessions [&i] | "','";
+   End-For;
+   
+   &sSessionsWhereClause = Substring(&sSessionsWhereClause, 1, Len(&sSessionsWhereClause) - 3);
+   
+   /* Get the Anticipated Units entered by the student */
+   Local number &nUnitsStudent = GetLevel0().GetRow(1).GetRecord(Record.UC_FA_SM_ESTWRK).GetField(Field.UC_UNIT).Value;
+   
+   /* Get the total weeks of instruction for the sessions entered by the student */
+   Local number &nWeeksOfInstructionStudent = %This.GetWeeksOfInstruction(&sInInstitution, &sInAidYear, &sInProgramCode, &sSessionsWhereClause);
+   
+   /* Get the budget categories and calculate amounts for the "non-fixed" category types.  These values are multiplied by the Units entered by the student or Weeks of Instruction tied to the category */
+   Local string &sOutSessionCode, &sOutItemDescr, &sOutBudgetType, &sOutFeeOnly;
+   Local integer &iOutSeqNum;
+   Local number &nOutUnits = 0;
+   Local number &nOutAmount = 0;
+   Local number &nFeeAmount = 0;
+   Local integer &iRS = 1;
+   
+   Local SQL &sqlGetBudgetDescrAmountFixed = CreateSQL("SELECT DISTINCT BGT.DESCR, BGT.BUDGET_ITEM_AMOUNT, BGT.UC_FA_SM_BUDGT_TYP, BGT.UC_FA_SM_FEE_ONLY FROM PS_UC_FA_SM_BGTCAT BGT, PS_UC_FA_SM_SESS SESS, PS_UC_FA_SM_PGSSBG BGTSESS WHERE BGTSESS.INSTITUTION = BGT.INSTITUTION AND BGTSESS.INSTITUTION = SESS.INSTITUTION AND BGTSESS.INSTITUTION   = '" | &sInInstitution | "' AND BGTSESS.AID_YEAR = BGT.AID_YEAR AND BGTSESS.AID_YEAR = SESS.AID_YEAR AND BGTSESS.AID_YEAR = '" | &sInAidYear | "' AND BGTSESS.EFFDT = BGT.EFFDT AND BGTSESS.EFFDT = SESS.EFFDT AND BGT.EFFDT = (SELECT MAX(BGT2.EFFDT) FROM PS_UC_FA_SM_BGTCAT BGT2 WHERE BGT2.INSTITUTION = BGT.INSTITUTION AND BGT2.AID_YEAR = BGT.AID_YEAR AND BGT2.UC_FA_SM_BGTCAT_CD= BGT.UC_FA_SM_BGTCAT_CD AND BGT2.EFFDT <= TO_DATE(TO_CHAR(SYSDATE,'YYYY-MM-DD'),'YYYY-MM-DD')) AND BGTSESS.UC_FA_SM_PROG_CODE = '" | &sInProgramCode | "' AND BGTSESS.UC_FA_SM_SESS_CD = SESS.UC_FA_SM_SESS_CD AND BGTSESS.UC_FA_SM_SESS_CD IN ('" | &sSessionsWhereClause | "') AND BGTSESS.UC_FA_SM_BGTCAT_CD = BGT.UC_FA_SM_BGTCAT_CD AND BGT.UC_FA_SM_BUDGT_TYP = 'FIXD' ORDER BY BGT.DESCR DESC");
+   
+   While &sqlGetBudgetDescrAmountFixed.Fetch(&sOutItemDescr, &nOutAmount, &sOutBudgetType, &sOutFeeOnly)
+      If &iRS > 1 Then
+         &rsResults.InsertRow(0);
+         &rResults = &rsResults.GetRow(1);
+      Else
+         &rResults = &rsResults.GetRow(1);
+      End-If;
+      &rResults.UC_FA_SM_ESTAMT.DESCR.Value = &sOutItemDescr;
+      &rResults.UC_FA_SM_ESTAMT.UC_AMOUNT.Value = &nOutAmount;
+      &rResults.UC_FA_SM_ESTAMT.UC_FA_SM_BUDGT_TYP.Value = &sOutBudgetType;
+      If (&sOutFeeOnly = "Y") Then
+         &nFeeAmount = &nFeeAmount + &nOutAmount;
+      End-If;
+      
+      &iRS = &iRS + 1;
+   End-While;
+   &sqlGetBudgetDescrAmountFixed.Close();
+   
+   Local SQL &sqlGetBudgetDescrAmountNotFixed = CreateSQL("SELECT DISTINCT BGT.DESCR, BGT.BUDGET_ITEM_AMOUNT, BGT.UC_FA_SM_BUDGT_TYP, BGT.UC_FA_SM_FEE_ONLY FROM PS_UC_FA_SM_BGTCAT BGT, PS_UC_FA_SM_SESS SESS, PS_UC_FA_SM_PGSSBG BGTSESS WHERE BGTSESS.INSTITUTION = BGT.INSTITUTION AND BGTSESS.INSTITUTION = SESS.INSTITUTION AND BGTSESS.INSTITUTION   = '" | &sInInstitution | "' AND BGTSESS.AID_YEAR = BGT.AID_YEAR AND BGTSESS.AID_YEAR = SESS.AID_YEAR AND BGTSESS.AID_YEAR = '" | &sInAidYear | "' AND BGTSESS.EFFDT = BGT.EFFDT AND BGTSESS.EFFDT = SESS.EFFDT AND BGT.EFFDT = (SELECT MAX(BGT2.EFFDT) FROM PS_UC_FA_SM_BGTCAT BGT2 WHERE BGT2.INSTITUTION = BGT.INSTITUTION AND BGT2.AID_YEAR = BGT.AID_YEAR AND BGT2.UC_FA_SM_BGTCAT_CD= BGT.UC_FA_SM_BGTCAT_CD AND BGT2.EFFDT <= TO_DATE(TO_CHAR(SYSDATE,'YYYY-MM-DD'),'YYYY-MM-DD')) AND BGTSESS.UC_FA_SM_PROG_CODE = '" | &sInProgramCode | "' AND BGTSESS.UC_FA_SM_SESS_CD = SESS.UC_FA_SM_SESS_CD AND BGTSESS.UC_FA_SM_SESS_CD IN ('" | &sSessionsWhereClause | "') AND BGTSESS.UC_FA_SM_BGTCAT_CD = BGT.UC_FA_SM_BGTCAT_CD AND BGT.UC_FA_SM_BUDGT_TYP <> 'FIXD' ORDER BY BGT.DESCR DESC");
+   
+   
+   While &sqlGetBudgetDescrAmountNotFixed.Fetch(&sOutItemDescr, &nOutAmount, &sOutBudgetType, &sOutFeeOnly)
+      If &iRS > 1 Then
+         &rsResults.InsertRow(0);
+         &rResults = &rsResults.GetRow(1);
+         
+      Else
+         &rResults = &rsResults.GetRow(1);
+      End-If;
+      &rResults.UC_FA_SM_ESTAMT.DESCR.Value = &sOutItemDescr;
+      
+      Evaluate &sOutBudgetType
+      When = "UNIT"
+         &nOutAmount = &nOutAmount * &nUnitsStudent;
+         Break;
+      When = "WEEK"
+         &nOutAmount = &nOutAmount * &nWeeksOfInstructionStudent;
+         Break;
+      When-Other
+         Break;
+      End-Evaluate;
+      &rResults.UC_FA_SM_ESTAMT.UC_AMOUNT.Value = &nOutAmount;
+      &rResults.UC_FA_SM_ESTAMT.UC_FA_SM_BUDGT_TYP.Value = &sOutBudgetType;
+      If (&sOutFeeOnly = "Y") Then
+         &nFeeAmount = &nFeeAmount + &nOutAmount;
+      End-If;
+      
+      &iRS = &iRS + 1;
+   End-While;
+   &sqlGetBudgetDescrAmountNotFixed.Close();
+   
+   /* Set the global variable for Award Equations */
+   %This.GLB_TOTAL_SUMMER_FEES = &nFeeAmount;
+   
+   Return &rsResults;
+   
+end-method;
+
+
+method GetPellEligible
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInCurrentAidYear as String, +/
+   /+ &sInUpcomingAidYear as String +/
+   /+ Returns String +/
+   Local string &sResult = "";
+   Local boolean &bDummy;
+   
+   Local SQL &sqlGetPellEligible = GetSQL(SQL.UC_FA_GET_PELL_ELIGIBLE, &sInEMPLID, &sInInstitution, &sInCurrentAidYear, &sInUpcomingAidYear);
+   
+   &bDummy = &sqlGetPellEligible.Fetch(&sResult);
+   &sqlGetPellEligible.Close();
+   
+   Return &sResult;
+   
+end-method;
+
+
+method GetPellAmount
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInPellAidYear as String, +/
+   /+ &nInUnits as Number, +/
+   /+ &nCOA as Number, +/
+   /+ &nEFC as Number +/
+   /+ Returns Number +/
+   Local number &nResult = 0;
+   Local boolean &bDummy;
+   
+   Local SQL &sqlGetPellAmount = GetSQL(SQL.UC_FA_GET_PELL_AMOUNT, &sInInstitution, &sInPellAidYear, &nInUnits, &nCOA, &nEFC);
+   
+   &bDummy = &sqlGetPellAmount.Fetch(&nResult);
+   &sqlGetPellAmount.Close();
+   
+   Return &nResult;
+   
+end-method;
+
+method GetBudgetAYOrTerm
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String, +/
+   /+ &sInTerm as String +/
+   /+ Returns Rowset +/
+   
+   /* Note - If field &sInTerm is blank, then we are processing for the Aid Year */
+   
+   Local Rowset &rsResults = CreateRowset(Record.UC_FA_SM_ESTAMT);
+   Local Row &rResults;
+   Local boolean &bDummy;
+   Local string &sOutDescr;
+   Local number &nOutAmount, &nUCSeq1, &nUCSeq2, &nUCSeq3;
+   
+   Local SQL &sqlGetBudget = Null;
+   If All(&sInTerm) Then
+      &sqlGetBudget = GetSQL(SQL.UC_FA_GET_BUDGET_TERM, &sInEMPLID, &sInInstitution, &sInAidYear, &sInTerm);
+   Else
+      &sqlGetBudget = GetSQL(SQL.UC_FA_GET_BUDGET_AY, &sInEMPLID, &sInInstitution, &sInAidYear);
+   End-If;
+   Local integer &iRS = 0;
+   
+   While &sqlGetBudget.Fetch(&sOutDescr, &nOutAmount, &nUCSeq3, &nUCSeq1, &nUCSeq2)
+      If &iRS > 0 Then
+         &rsResults.InsertRow(0);
+         &rResults = &rsResults.GetRow(1);
+      Else
+         &rResults = &rsResults.GetRow(1);
+      End-If;
+      &rResults.UC_FA_SM_ESTAMT.DESCR.Value = &sOutDescr;
+      &rResults.UC_FA_SM_ESTAMT.UC_AMOUNT.Value = &nOutAmount;
+      &iRS = &iRS + 1;
+      
+   End-While;
+   &sqlGetBudget.Close();
+   
+   Return &rsResults;
+end-method;
+
+method CheckForFAFSAErrors
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String +/
+   /+ Returns Boolean +/
+   
+   Local boolean &bIsThereAProblemPreventingAidCalculation = False;
+   %This.sNoOrIncomplete = "no";
+   
+   /* Get ISIR Status for Current Aid Year */
+   Local string &sISIRStatus = %This.GetISIRStatusForAidYear(&sInEMPLID, &sInInstitution, &sInAidYear, False);
+   Local string &sISIRStatus2 = %This.GetISIRStatusForAidYear(&sInEMPLID, &sInInstitution, %This.sUpcomingAidYear, False);
+   
+   /* Check if student is a dreamer (does s/he have a row for either current or upcoming aid year on ISIR_CONTROL? */
+   If ((All(&sISIRStatus)) Or
+         (All(&sISIRStatus2))) Then
+      %This.bIsADreamer = False;
+   Else
+      /* Student does not have a row on ISIR_CONTROL for either current or upcoming aid years */
+      Local string &sCalISIRStatus = %This.GetISIRStatusForAidYear(&sInEMPLID, &sInInstitution, &sInAidYear, True);
+      Local string &sCalISIRStatus2 = %This.GetISIRStatusForAidYear(&sInEMPLID, &sInInstitution, %This.sUpcomingAidYear, True);
+      If ((All(&sCalISIRStatus)) Or
+            (All(&sCalISIRStatus2))) Then
+         %This.bIsADreamer = True;
+         /* If we made it this far, we are going to need to perform the next steps using the Cal ISIR data, so assign these values to the variables */
+         &sISIRStatus = &sCalISIRStatus;
+         &sISIRStatus2 = &sCalISIRStatus2;
+      End-If;
+   End-If;
+   
+   If All(&sISIRStatus) Then
+      If ((&sISIRStatus = "O") Or
+            (&sISIRStatus = "U")) Then
+         /* Current Aid Year ISIR is ok */
+         %This.sAidYearToUseForCalculations = &sInAidYear;
+      Else
+         &bIsThereAProblemPreventingAidCalculation = True;
+      End-If;
+   Else
+      &bIsThereAProblemPreventingAidCalculation = True;
+   End-If;
+   
+   If ((%This.sAidYearToUseForCalculations <> &sInAidYear) And
+         (All(&sISIRStatus2))) Then
+      /* If we made it this far the student does not have a non-rejected row on ISIR_CONTROL ( or Cal ISIR Control, if dreamer) for the aid year, check the upcomping */
+      If ((&sISIRStatus2 = "O") Or
+            (&sISIRStatus2 = "U")) Then
+         
+         %This.sNoOrIncomplete = "an incomplete";
+         %This.sAidYearToUseForCalculations = %This.sUpcomingAidYear;
+         &bIsThereAProblemPreventingAidCalculation = False;
+         
+      End-If;
+      
+   End-If;
+   
+   Return &bIsThereAProblemPreventingAidCalculation;
+   
+end-method;
+
+method GetISIRStatusForAidYear
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String, +/
+   /+ &sInDreamerCheck as Boolean +/
+   /+ Returns String +/
+   Local boolean &bDummy;
+   Local string &sResult = "";
+   Local SQL &sqlGetISIRStatusForAidYear = Null;
+   If &sInDreamerCheck Then
+      &sqlGetISIRStatusForAidYear = GetSQL(SQL.UC_FA_GET_CISIR_STATUS_AIDYEAR, &sInEMPLID, &sInInstitution, &sInAidYear);
+   Else
+      &sqlGetISIRStatusForAidYear = GetSQL(SQL.UC_FA_GET_ISIR_STATUS_AIDYEAR, &sInEMPLID, &sInInstitution, &sInAidYear);
+   End-If;
+   
+   &bDummy = &sqlGetISIRStatusForAidYear.Fetch(&sResult);
+   
+   &sqlGetISIRStatusForAidYear.Close();
+   
+   Return &sResult;
+   
+end-method;
+
+method CheckForSatisfactoryAcadProgress
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String +/
+   /+ Returns Boolean +/
+   Local string &sResult = "";
+   Local boolean &bResult = False;
+   Local boolean &bDummy;
+   
+   Local SQL &sqlGetISIRStatusForAidYear = GetSQL(SQL.UC_FA_GET_SAP, &sInEMPLID, &sInInstitution, &sInAidYear);
+   
+   &bDummy = &sqlGetISIRStatusForAidYear.Fetch(&sResult);
+   &sqlGetISIRStatusForAidYear.Close();
+   
+   If All(&sResult) Then
+      &bResult = True;
+   End-If;
+   
+   Return &bResult;
+   
+end-method;
+
+method IsSelfServiceAwardSecurityAllowed
+   /+ &sInEmplid as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String +/
+   /+ Returns Boolean +/
+   Local boolean &bResult = False;
+   Local string &sResult = "";
+   Local boolean &bDummy;
+   
+   Local SQL &sqlISsSelfServiceAwardSecurityAllowed = GetSQL(SQL.UC_FA_GET_FA_SS_AWD_SECURITY, &sInEmplid, &sInInstitution, &sInAidYear);
+   
+   &bDummy = &sqlISsSelfServiceAwardSecurityAllowed.Fetch(&sResult);
+   &sqlISsSelfServiceAwardSecurityAllowed.Close();
+   
+   If All(&sResult) Then
+      &bResult = True;
+   End-If;
+   
+   
+   Return &bResult;
+end-method;
+
+
+method GetAwardsSummer
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYearCurrent as String, +/
+   /+ &sInAidYearCalculations as String, +/
+   /+ &sInCareer as String +/
+   /+ Returns Rowset +/
+   Local Rowset &rsResults = CreateRowset(Record.UC_FA_SM_ESTAMT);
+   Local Row &rResults;
+   Local string &sOutItemDescr, &sOutEquationName;
+   Local integer &i;
+   Local integer &iRS = 1;
+   
+   If %This.bDebugMode Then
+      Local string &sDebugGlobals = "Aid Year for Calculations: " | %This.sAidYearToUseForCalculations | " :: ";
+      &sDebugGlobals = &sDebugGlobals | "GLB_ANTICIPATED_UNITS: " | %This.GLB_ANTICIPATED_UNITS | " :: ";
+      &sDebugGlobals = &sDebugGlobals | "GLB_MIN_UNITS_FOR_FA: " | %This.GLB_MIN_UNITS_FOR_FA | " :: ";
+      &sDebugGlobals = &sDebugGlobals | "GLB_TOTAL_SUMMER_FEES: " | %This.GLB_TOTAL_SUMMER_FEES | " :: ";
+      &sDebugGlobals = &sDebugGlobals | "GLB_TOTAL_SUMMER_COA: " | %This.GLB_TOTAL_SUMMER_COA | " :: ";
+      &sDebugGlobals = &sDebugGlobals | "GLB_PELL_AMOUNT: " | %This.GLB_PELL_AMOUNT | " :: ";
+      &sDebugGlobals = &sDebugGlobals | "GLB_PROGRAM_CODE: " | %This.GLB_PROGRAM_CODE | " :: ";
+      &sDebugGlobals = &sDebugGlobals | "GLB_ISIR_AID_YEAR: " | %This.GLB_ISIR_AID_YEAR | " :: ";
+      &sDebugGlobals = &sDebugGlobals | "GLB_AY_EFC: " | %This.GLB_AY_EFC | " :: ";
+      &sDebugGlobals = &sDebugGlobals | "GLB_SMR_EFC: " | %This.GLB_SMR_EFC | " :: ";
+      &sDebugGlobals = &sDebugGlobals | "IsDreamer?: " | %This.bIsADreamer;
+      MessageBox(0, "", 0, 0, &sDebugGlobals);
+   End-If;
+   
+   Local SQL &sqlGetAwardEquations = GetSQL(SQL.UC_FA_GET_AWARD_EQUATIONS, &sInInstitution, &sInAidYearCurrent);
+   
+   While &sqlGetAwardEquations.Fetch(&sOutItemDescr, &sOutEquationName)
+      
+      If &iRS > 1 Then
+         &rsResults.InsertRow(0);
+         &rResults = &rsResults.GetRow(1);
+      Else
+         &rResults = &rsResults.GetRow(1);
+      End-If;
+      
+      &rResults.UC_FA_SM_ESTAMT.DESCR.Value = &sOutItemDescr;
+      &rResults.UC_FA_SM_ESTAMT.UC_FA_SM_AWRD_EQTN.Value = &sOutEquationName;
+      
+      &iRS = &iRS + 1;
+   End-While;
+   &sqlGetAwardEquations.Close();
+   
+   For &i = 1 To &rsResults.RowCount
+      
+      If All(&rsResults(&i).UC_FA_SM_ESTAMT.UC_FA_SM_AWRD_EQTN.Value) Then
+         &rsResults(&i).UC_FA_SM_ESTAMT.UC_AMOUNT.Value = %This.CallEquation(&sInEMPLID, &sInInstitution, &sInAidYearCalculations, &sInCareer, &rsResults(&i).UC_FA_SM_ESTAMT.UC_FA_SM_AWRD_EQTN.Value);
+      End-If;
+      
+   End-For;
+   
+   Return &rsResults;
+   
+end-method;
+
+method GetAwardsAYOrTerm
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String, +/
+   /+ &sInTerm as String +/
+   /+ Returns Rowset +/
+   
+   /* Note - If field &sInTerm is blank, then we are processing for the Aid Year */
+   
+   Local Rowset &rsResults = CreateRowset(Record.UC_FA_SM_ESTAMT);
+   Local Row &rResults;
+   Local boolean &bDummy;
+   Local string &sOutItemType;
+   Local string &sOutDescr;
+   Local number &nOutAmount;
+   Local SQL &sqlGetAwards = Null;
+   If All(&sInTerm) Then
+      &sqlGetAwards = GetSQL(SQL.UC_FA_GET_AWARDS_TERM, &sInEMPLID, &sInInstitution, &sInAidYear, &sInTerm);
+   Else
+      &sqlGetAwards = GetSQL(SQL.UC_FA_GET_AWARDS_AY, &sInEMPLID, &sInInstitution, &sInAidYear);
+   End-If;
+   Local integer &iRS = 0;
+   
+   While &sqlGetAwards.Fetch(&sOutItemType, &sOutDescr, &nOutAmount)
+      If &iRS > 0 Then
+         &rsResults.InsertRow(0);
+         &rResults = &rsResults.GetRow(1);
+      Else
+         &rResults = &rsResults.GetRow(1);
+      End-If;
+      &rResults.UC_FA_SM_ESTAMT.DESCR.Value = &sOutDescr;
+      &rResults.UC_FA_SM_ESTAMT.UC_AMOUNT.Value = &nOutAmount;
+      
+      &iRS = &iRS + 1;
+      
+   End-While;
+   &sqlGetAwards.Close();
+   
+   Return &rsResults;
+end-method;
+
+
+method GetWeeksOfInstruction
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String, +/
+   /+ &sInProgramCode as String, +/
+   /+ &sInSessionsWhereClause as String +/
+   /+ Returns Number +/
+   
+   Local number &nResult = 0;
+   Local boolean &bDummy;
+   
+   /* Weeks of Instruction defined as (MAX(END_DATE) - MIN(START_DATE) / 7) for the sessions selected, and rounded up */
+   /* SISRP-39892 start */
+   /*
+   Local SQL &sqlGetWeeksOfInstruction = CreateSQL("SELECT DISTINCT ROUND((MAX.END_DATE - MIN.START_DATE) / 7) FROM PS_UC_FA_SM_SESS MIN, PS_UC_FA_SM_SESS MAX WHERE MIN.INSTITUTION = '" | &sInInstitution | "' AND MIN.INSTITUTION = MAX.INSTITUTION AND MIN.AID_YEAR = '" | &sInAidYear | "' AND MIN.AID_YEAR = MAX.AID_YEAR AND MIN.UC_FA_SM_PROG_CODE = 'ONCAMPUS' AND MIN.UC_FA_SM_PROG_CODE = MAX.UC_FA_SM_PROG_CODE AND MIN.EFFDT = (SELECT MAX(MIN2.EFFDT) FROM PS_UC_FA_SM_SESS MIN2 WHERE MIN2.INSTITUTION = MIN.INSTITUTION AND MIN2.AID_YEAR = MIN.AID_YEAR AND MIN2.UC_FA_SM_PROG_CODE = MIN.UC_FA_SM_PROG_CODE AND MIN2.EFFDT <= SYSDATE) AND MIN.EFFDT = MAX.EFFDT AND MIN.UC_FA_SM_SESS_CD IN ('" | &sInSessionsWhereClause | "') AND MAX.UC_FA_SM_SESS_CD IN ('" | &sInSessionsWhereClause | "') AND MIN.START_DATE = (SELECT MIN(MIN3.START_DATE) FROM PS_UC_FA_SM_SESS MIN3 WHERE MIN3.INSTITUTION = MIN.INSTITUTION AND MIN3.AID_YEAR = MIN.AID_YEAR AND MIN3.EFFDT = MIN.EFFDT AND MIN3.UC_FA_SM_PROG_CODE = MIN.UC_FA_SM_PROG_CODE AND MIN3.UC_FA_SM_SESS_CD IN ('" | &sInSessionsWhereClause | "')) AND MAX.END_DATE = (SELECT MAX(MAX3.END_DATE) FROM PS_UC_FA_SM_SESS MAX3 WHERE MAX3.INSTITUTION = MAX.INSTITUTION AND MAX3.AID_YEAR = MAX.AID_YEAR AND MAX3.EFFDT = MAX.EFFDT AND MAX3.UC_FA_SM_PROG_CODE = MAX.UC_FA_SM_PROG_CODE AND MAX3.UC_FA_SM_SESS_CD IN ('" | &sInSessionsWhereClause | "'))");
+*/
+   Local SQL &sqlGetWeeksOfInstruction = CreateSQL("SELECT DISTINCT ROUND((MAX.END_DATE - MIN.START_DATE) / 7) FROM PS_UC_FA_SM_SESS MIN, PS_UC_FA_SM_SESS MAX WHERE MIN.INSTITUTION = '" | &sInInstitution | "' AND MIN.INSTITUTION = MAX.INSTITUTION AND MIN.AID_YEAR = '" | &sInAidYear | "' AND MIN.AID_YEAR = MAX.AID_YEAR AND MIN.UC_FA_SM_PROG_CODE = '" | &sInProgramCode | "' AND MIN.UC_FA_SM_PROG_CODE = MAX.UC_FA_SM_PROG_CODE AND MIN.EFFDT = (SELECT MAX(MIN2.EFFDT) FROM PS_UC_FA_SM_SESS MIN2 WHERE MIN2.INSTITUTION = MIN.INSTITUTION AND MIN2.AID_YEAR = MIN.AID_YEAR AND MIN2.UC_FA_SM_PROG_CODE = MIN.UC_FA_SM_PROG_CODE AND MIN2.EFFDT <= SYSDATE) AND MIN.EFFDT = MAX.EFFDT AND MIN.UC_FA_SM_SESS_CD IN ('" | &sInSessionsWhereClause | "') AND MAX.UC_FA_SM_SESS_CD IN ('" | &sInSessionsWhereClause | "') AND MIN.START_DATE = (SELECT MIN(MIN3.START_DATE) FROM PS_UC_FA_SM_SESS MIN3 WHERE MIN3.INSTITUTION = MIN.INSTITUTION AND MIN3.AID_YEAR = MIN.AID_YEAR AND MIN3.EFFDT = MIN.EFFDT AND MIN3.UC_FA_SM_PROG_CODE = MIN.UC_FA_SM_PROG_CODE AND MIN3.UC_FA_SM_SESS_CD IN ('" | &sInSessionsWhereClause | "')) AND MAX.END_DATE = (SELECT MAX(MAX3.END_DATE) FROM PS_UC_FA_SM_SESS MAX3 WHERE MAX3.INSTITUTION = MAX.INSTITUTION AND MAX3.AID_YEAR = MAX.AID_YEAR AND MAX3.EFFDT = MAX.EFFDT AND MAX3.UC_FA_SM_PROG_CODE = MAX.UC_FA_SM_PROG_CODE AND MAX3.UC_FA_SM_SESS_CD IN ('" | &sInSessionsWhereClause | "'))");
+   
+   /* SISRP-39892 end */
+   &bDummy = &sqlGetWeeksOfInstruction.Fetch(&nResult);
+   &sqlGetWeeksOfInstruction.Close();
+   
+   Return &nResult;
+   
+end-method;
+
+method GetTermDescr
+   /+ &sInTerm as String +/
+   /+ Returns String +/
+   
+   Local string &sResult = "";
+   Local boolean &bDummy;
+   
+   Local SQL &sqlGetTermDescr = GetSQL(SQL.UC_FA_GET_TERM_DESCR, &sInTerm);
+   
+   &bDummy = &sqlGetTermDescr.Fetch(&sResult);
+   &sqlGetTermDescr.Close();
+   
+   Return &sResult;
+   
+end-method;
+
+method GetStudentCareer
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInSummerTerm as String +/
+   /+ Returns String +/
+   Local string &sResult = "";
+   
+   /* 1) Look for summer row on FA Term */
+   &sResult = &objStudent.GetCareerFromFATermIdInst(&sInEMPLID, &sInInstitution, &sInSummerTerm);
+   
+   If None(&sResult) Then
+      /* 2) If no summer row found, look for previous spring */
+      Local string &sPreviousSpring = Substring(&sInSummerTerm, 1, 3) | "2";
+      &sResult = &objStudent.GetCareerFromFATermIdInst(&sInEMPLID, &sInInstitution, &sPreviousSpring);
+      
+      If None(&sResult) Then
+         /* 3) If no previous spring found, look for next fall */
+         Local string &sNextFall = Substring(&sInSummerTerm, 1, 3) | "8";
+         &sResult = &objStudent.GetCareerFromFATermIdInst(&sInEMPLID, &sInInstitution, &sNextFall);
+         
+         If None(&sResult) Then
+            /* 4) If nothing found for next fall, throw an error */
+            &sResult = "ERROR";
+         End-If;
+      End-If;
+   End-If;
+   
+   Return &sResult;
+end-method;
+
+method SetRunCtlKeys
+   
+   Local Record &recSummerEstimatorParams;
+   
+   &recSummerEstimatorParams = CreateRecord(Record.UC_FA_SM_ESTPRM);
+   &recSummerEstimatorParams.OPRID.Value = %OperatorId;
+   
+   &recEquationRunControl = CreateRecord(Record.EQTN_RUN_CNTL);
+   &recEquationRunControl.OPRID.Value = %OperatorId;
+   &recEquationRunControl.RUN_CNTL_ID.Value = &sEqtn_RunControlID;
+   
+end-method;
+
+method SetRunCtlData
+   
+   Local Record &recSummerEstimatorParams, &recSummerEstimatorParams_check;
+   &recSummerEstimatorParams = CreateRecord(Record.UC_FA_SM_ESTPRM);
+   &recSummerEstimatorParams_check = CreateRecord(Record.UC_FA_SM_ESTPRM);
+   &recSummerEstimatorParams.CopyFieldsTo(&recSummerEstimatorParams_check);
+   &recSummerEstimatorParams.OPRID.Value = %OperatorId;
+   If Not (&recSummerEstimatorParams_check.SelectByKey()) Then
+      &recSummerEstimatorParams.OPRID.Value = %OperatorId;
+      &recSummerEstimatorParams.EMPLID.Value = &sEqtn_EMPLID;
+      &recSummerEstimatorParams.INSTITUTION.Value = &sEqtn_Institution;
+      &recSummerEstimatorParams.AID_YEAR.Value = &sEqtn_AidYear;
+      &recSummerEstimatorParams.ACAD_CAREER.Value = &sEqtn_AcadCareer;
+      &recSummerEstimatorParams.Insert();
+   Else
+      &recSummerEstimatorParams.OPRID.Value = %OperatorId;
+      &recSummerEstimatorParams.EMPLID.Value = &sEqtn_EMPLID;
+      &recSummerEstimatorParams.INSTITUTION.Value = &sEqtn_Institution;
+      &recSummerEstimatorParams.AID_YEAR.Value = &sEqtn_AidYear;
+      &recSummerEstimatorParams.ACAD_CAREER.Value = &sEqtn_AcadCareer;
+   End-If;
+   
+   If &recEquationRunControl.SelectByKey() Then
+      /* update */
+      SQLExec("UPDATE PS_EQTN_RUN_CNTL SET EQUATION_NAME = :1 WHERE OPRID = :2 AND RUN_CNTL_ID = :3", &sEquationName, %OperatorId, &sEqtn_RunControlID);
+   Else
+      /* insert */
+      SQLExec("INSERT INTO PS_EQTN_RUN_CNTL ( OPRID, RUN_CNTL_ID, EQUATION_NAME ) VALUES ( :1, :2, :3 )", %OperatorId, &sEqtn_RunControlID, &sEquationName);
+   End-If;
+end-method;
+
+method CallEquation
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String, +/
+   /+ &sInCareer as String, +/
+   /+ &sInEquationName as String +/
+   /+ Returns Number +/
+   Local SCC_EQUATION_ENGINE:Equation &eqSumEstimatorEquation;
+   Local SCC_EQUATION_ENGINE:Equation_Space &esSumEstimatorSpace;
+   
+   &sEquationName = &sInEquationName;
+   &sEquationSpaceName = &sEquationName | "_REMOTECALL";
+   &sEqtn_RunControlID = "_Summer_AID_Estimator_";
+   Local Rowset &rs0 = GetLevel0();
+   &sEqtn_EMPLID = &sInEMPLID;
+   &sEqtn_Institution = &sInInstitution;
+   &sEqtn_AidYear = &sInAidYear;
+   &sEqtn_AcadCareer = &sInCareer;
+   
+   &esSumEstimatorSpace = create SCC_EQUATION_ENGINE:Equation_Space();
+   &esSumEstimatorSpace.sName = &sEquationSpaceName;
+   &esSumEstimatorSpace.ClearGlobals();
+   &sEqtn_OPRID = %OperatorId;
+   &esSumEstimatorSpace.SetGlobal("EMPLID", "String", &sEqtn_EMPLID);
+   &esSumEstimatorSpace.SetGlobal("INSTITUTION", "String", &sEqtn_Institution);
+   &esSumEstimatorSpace.SetGlobal("AID_YEAR", "String", &sEqtn_AidYear);
+   &esSumEstimatorSpace.SetGlobal("ACAD_CAREER", "String", &sEqtn_AcadCareer);
+   &esSumEstimatorSpace.SetGlobal("GLB_ANTICIPATED_UNITS", "Number", %This.GLB_ANTICIPATED_UNITS);
+   &esSumEstimatorSpace.SetGlobal("GLB_TOTAL_SUMMER_FEES", "Number", %This.GLB_TOTAL_SUMMER_FEES);
+   &esSumEstimatorSpace.SetGlobal("GLB_TOTAL_SUMMER_COA", "Number", %This.GLB_TOTAL_SUMMER_COA);
+   &esSumEstimatorSpace.SetGlobal("GLB_PELL_AMOUNT", "Number", %This.GLB_PELL_AMOUNT);
+   &esSumEstimatorSpace.SetGlobal("GLB_PROGRAM_CODE", "String", %This.GLB_PROGRAM_CODE);
+   /* SISRP-40386 start */
+   &esSumEstimatorSpace.SetGlobal("GLB_ISIR_AID_YEAR", "String", %This.GLB_ISIR_AID_YEAR);
+   /* SISRP-40386 end */
+   &esSumEstimatorSpace.SetGlobal("GLB_AY_EFC", "Number", %This.GLB_AY_EFC);
+   &esSumEstimatorSpace.SetGlobal("GLB_SMR_EFC", "Number", %This.GLB_SMR_EFC);
+   
+   &eqSumEstimatorEquation = create SCC_EQUATION_ENGINE:Equation();
+   &eqSumEstimatorEquation.sName = &sEquationName;
+   &eqSumEstimatorEquation.sSpaceNameIn = &sEquationSpaceName;
+   &eqSumEstimatorEquation.sSpaceNameOut = &sEquationSpaceName;
+   &eqSumEstimatorEquation.bLogInfoMsgs = True;
+   
+   %This.SetRunCtlKeys();
+   %This.SetRunCtlData();
+   
+   DoSaveNow();
+   
+   try
+      &eqSumEstimatorEquation.Execute();
+      
+   catch SCC_EQUATION_ENGINE:Equation_Exception &eqxLoanValEqtnException;
+      If (%This.bDebugMode) Then
+         MessageBox(%MsgStyle_OK, "Equation Run Status", 14460, 302, "Equation Run Failed");
+         &eqxLoanValEqtnException.Output();
+      End-If;
+   end-try;
+   
+   If &eqSumEstimatorEquation.iMessageNumber <> 0 Then
+      If (%This.bDebugMode) Then
+         MessageBox(%MsgStyle_OK, "Equation Run Status", 14460, 302, "Equation Run Failed");
+         MessageBox(%MsgStyle_OK, "Equation Failure", &eqSumEstimatorEquation.iMessageSet, &eqSumEstimatorEquation.iMessageNumber, "Equation Run Failed");
+      End-If;
+   End-If;
+   
+   DoSaveNow();
+   
+   &esSumEstimatorSpace = create SCC_EQUATION_ENGINE:Equation_Space();
+   &esSumEstimatorSpace.sName = &sEquationSpaceName;
+   
+   &arrGlobalReturn = &esSumEstimatorSpace.GetGlobal("A_AMOUNT");
+   If &arrGlobalReturn [1] <> "Number" Then
+      
+      If (%This.bDebugMode) Then
+         MessageBox(0, "", 0, 0, "Equation " | &sEquationName | " returned a non-numeric value.");
+      End-If;
+      Return 0;
+      
+   Else
+      &nEquationAmount = &arrGlobalReturn [2];
+      REM     MessageBox(0, "", 0, 0, &arrGlobalReturn [2] | " " | String(&nEquationAmount));
+      Return &nEquationAmount;
+   End-If;
+   
+   /*  Leaving the following block of code here in case someday we need to use "A_SELECT" instead of "A_AMOUNT" */
+   /*
+   &arrGlobalReturn = &esSumEstimatorSpace.GetGlobal("A_SELECT");
+   If &arrGlobalReturn [1] <> "String" Then
+      MessageBox(0, "", 14760, 29, "Insufficient Tuition Calculation Pamareters for EMPLID %1 and Institution %2 and Term %3.", &sEqtn_EMPLID, &sEqtn_Institution, "TODO");
+   Else
+      &sEquationResult = &arrGlobalReturn [2];
+      MessageBox(0, "", 0, 0, &sEquationResult);
+   End-If;
+*/
+end-method;
+
+method GetHousingCode
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String, +/
+   /+ &sInProgramCode as String +/
+   /+ Returns String +/
+   
+   Local string &sResult = "";
+   Local boolean &bDummy;
+   
+   Local SQL &sqlGetHousingCode = GetSQL(SQL.UC_FA_GET_HOUSING_CODE, &sInInstitution, &sInAidYear, &sInProgramCode);
+   
+   &bDummy = &sqlGetHousingCode.Fetch(&sResult);
+   &sqlGetHousingCode.Close();
+   
+   Return &sResult;
+   
+end-method;
+
+method ProcessHousing
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String, +/
+   /+ &sInCareer as String, +/
+   /+ &sInTerm as String, +/
+   /+ &sInHousingCode as String +/
+   /+ Returns Boolean +/
+   
+   Local boolean &bResult = True;
+   
+   If (%This.IsStudentEligibleForHousingProcess(&sInEMPLID, &sInInstitution, &sInAidYear, %This.sUpcomingAidYear, &sInCareer, &sInTerm, &sInHousingCode)) Then
+      /* Build Rowset to invoke Housing Process.  Level 0 = STUDENT_AID; Level 1 = UC_STD_CR_TRMVW; Level 2 = UC_STD_HOUSO_VW */
+      /* In this case, we are generating a row for the Fall term only */
+      
+      Local Record &recLevel0 = CreateRecord(Record.STUDENT_AID);
+      Local Record &recLevel1 = CreateRecord(Record.UC_STD_CR_TRMVW);
+      Local Record &recLevel2 = CreateRecord(Record.UC_STD_HOUSO_VW);
+      
+      Local Rowset &rsLevel0 = CreateRowset(Record.STUDENT_AID, CreateRowset(Record.UC_STD_CR_TRMVW, CreateRowset(Record.UC_STD_HOUSO_VW)));
+      
+      /* Populate Level0 Fields */
+      &rsLevel0(1).STUDENT_AID.EMPLID.Value = &sInEMPLID;
+      &rsLevel0(1).STUDENT_AID.INSTITUTION.Value = &sInInstitution;
+      &rsLevel0(1).STUDENT_AID.AID_YEAR.Value = &sInAidYear;
+      
+      Local Row &rowLevel0 = &rsLevel0.GetRow(1);
+      Local Rowset &rsLevel1 = &rowLevel0.GetRowset(Scroll.UC_STD_CR_TRMVW);
+      
+      /* We are only creating 1 row in this level for the Fall Term */
+      Local Row &rowLevel1 = &rsLevel1.GetRow(1);
+      &rowLevel1.UC_STD_CR_TRMVW.EMPLID.Value = &sInEMPLID;
+      &rowLevel1.UC_STD_CR_TRMVW.INSTITUTION.Value = &sInInstitution;
+      &rowLevel1.UC_STD_CR_TRMVW.AID_YEAR.Value = &sInAidYear;
+      &rowLevel1.UC_STD_CR_TRMVW.ACAD_CAREER.Value = &sInCareer;
+      &rowLevel1.UC_STD_CR_TRMVW.STRM.Value = &sInTerm;
+      Local string &sTermSource = %This.GetTermSource(&sInEMPLID, &sInInstitution, &sInTerm);
+      If All(&sTermSource) Then
+         &rowLevel1.UC_STD_CR_TRMVW.TERM_SRC.Value = &sTermSource;
+      Else
+         Return False;
+      End-If;
+      
+      /* We are creating 1 row in level 2 for the single housing code */
+      Local Rowset &rsLevel2 = &rowLevel1.GetRowset(Scroll.UC_STD_HOUSO_VW);
+      Local Row &rowLevel2 = &rsLevel2.GetRow(1);
+      &rowLevel2.UC_STD_HOUSO_VW.EMPLID.Value = &sInEMPLID;
+      &rowLevel2.UC_STD_HOUSO_VW.INSTITUTION.Value = &sInInstitution;
+      &rowLevel2.UC_STD_HOUSO_VW.AID_YEAR.Value = &sInAidYear;
+      &rowLevel2.UC_STD_HOUSO_VW.ACAD_CAREER.Value = &sInCareer;
+      &rowLevel2.UC_STD_HOUSO_VW.STRM.Value = &sInTerm;
+      &rowLevel2.UC_STD_HOUSO_VW.EFFDT.Value = %Date;
+      &rowLevel2.UC_STD_HOUSO_VW.EFFSEQ.Value = %This.GetHousingNextEffseq(&sInEMPLID, &sInInstitution, &sInAidYear, &sInCareer, &sInTerm);
+      &rowLevel2.UC_STD_HOUSO_VW.UC_HOUSING_CD.Value = &sInHousingCode;
+      &rowLevel2.UC_STD_HOUSO_VW.SSR_CONFIRM.Value = "N";
+      &rowLevel2.UC_STD_HOUSO_VW.LASTUPDOPRID.Value = %OperatorId;
+      &rowLevel2.UC_STD_HOUSO_VW.LASTUPDDTTM.Value = %Datetime;
+      
+      /* Invoke the Housing Process */
+      Local UC_FA_STUDENT:Housing &objHousing;
+      &objHousing = create UC_FA_STUDENT:Housing();
+      &bResult = &objHousing.ProcessHousingOption(&rsLevel0);
+   Else
+      Return False;
+   End-If;
+   
+   Return &bResult;
+   
+end-method;
+
+method IsStudentEligibleForHousingProcess
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String, +/
+   /+ &sInUpcomingAidYear as String, +/
+   /+ &sInCareer as String, +/
+   /+ &sInTerm as String, +/
+   /+ &sInHousingCode as String +/
+   /+ Returns Boolean +/
+   
+   Local string &sResult = "";
+   Local boolean &bResult = True;
+   Local boolean &bDummy;
+   
+   /* Is student already confirmed for this term? */
+   Local SQL &sqlHousingIsAlreadyConfimed = GetSQL(SQL.UC_FA_HOUSING_CONFIRMED, &sInEMPLID, &sInInstitution, &sInUpcomingAidYear, &sInCareer, &sInTerm);
+   
+   &bDummy = &sqlHousingIsAlreadyConfimed.Fetch(&sResult);
+   &sqlHousingIsAlreadyConfimed.Close();
+   
+   If (All(&sResult)) Then
+      If (%This.bDebugMode) Then
+         MessageBox(0, "", 0, 0, "Housing Process not completed: Student's housing already confirmed.")
+      End-If;
+      Return False;
+   End-If;
+   
+   /* Is self-service student housing turned on? */
+   Local SQL &sqlHousingIsTurnedOn = GetSQL(SQL.UC_FA_HOUSING_IS_TURNED_ON, &sInInstitution, &sInAidYear, &sInCareer, &sInTerm);
+   
+   &bDummy = &sqlHousingIsTurnedOn.Fetch(&sResult);
+   &sqlHousingIsTurnedOn.Close();
+   
+   If (All(&sResult)) Then
+      If (%This.bDebugMode) Then
+         MessageBox(0, "", 0, 0, "Housing Process not completed: Self service housing is not active.")
+      End-If;
+      
+      Return False;
+      
+   End-If;
+   
+   
+   /* Is FA Term data available? */
+   Local SQL &sqlHousingFATermData = GetSQL(SQL.UC_FA_HOUSING_IS_TERM_SRC_N, &sInEMPLID, &sInInstitution, &sInTerm);
+   
+   &bDummy = &sqlHousingFATermData.Fetch(&sResult);
+   &sqlHousingFATermData.Close();
+   
+   If (All(&sResult)) Then
+      If (%This.bDebugMode) Then
+         MessageBox(0, "", 0, 0, "Housing Process not completed: Student's FA Term Source is N")
+      End-If;
+      
+      Return False;
+   End-If;
+   
+   /* Does the student have a budget for the term */
+   Local SQL &sqlHousingGetBudget = GetSQL(SQL.UC_FA_HOUSING_GET_BUDGET, &sInEMPLID, &sInInstitution, &sInUpcomingAidYear, &sInCareer, &sInTerm);
+   
+   &bDummy = &sqlHousingGetBudget.Fetch(&sResult);
+   &sqlHousingGetBudget.Close();
+   
+   If (None(&sResult)) Then
+      If (%This.bDebugMode) Then
+         MessageBox(0, "", 0, 0, "Housing Process not completed: Student does not have a budget for the fall term in the upcoming aid year")
+      End-If;
+      
+      Return False;
+   End-If;
+   <*
+   /* Does the student already have existing housing option that matches the one s/he is processing? */
+   Local SQL &sqlHousingSameAlready = GetSQL(SQL.UC_FA_HOUSING_SAME_ALREADY, &sInEMPLID, &sInInstitution, &sInUpcomingAidYear, &sInCareer, &sInTerm, &sInHousingCode);
+   
+   &bDummy = &sqlHousingSameAlready.Fetch(&sResult);
+   &sqlHousingSameAlready.Close();
+   
+   If (All(&sResult)) Then
+      If (%This.bDebugMode) Then
+         MessageBox(0, "", 0, 0, "Housing Process not completed: Student already has the same housing code.")
+      End-If;
+      
+      Return True;
+   End-If;
+*>
+   Return &bResult;
+   
+end-method;
+
+method GetTermSource
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInTerm as String +/
+   /+ Returns String +/
+   
+   Local string &sResult = "";
+   Local boolean &bDummy;
+   
+   Local SQL &sqlHousingFATermData = GetSQL(SQL.UC_FA_GET_TERM_SRC, &sInEMPLID, &sInInstitution, &sInTerm);
+   
+   &bDummy = &sqlHousingFATermData.Fetch(&sResult);
+   &sqlHousingFATermData.Close();
+   
+   Return &sResult;
+   
+end-method;
+
+method GetHousingNextEffseq
+   /+ &sInEMPLID as String, +/
+   /+ &sInInstitution as String, +/
+   /+ &sInAidYear as String, +/
+   /+ &sInCareer as String, +/
+   /+ &sInTerm as String +/
+   /+ Returns Number +/
+   
+   /* If no row exists where EFFDT = %Date, this method returns a 1, otherwise the SQL returns to the existing value + 1 */
+   
+   Local number &nResult = 0;
+   Local boolean &bDummy;
+   
+   Local SQL &sqlHousingNextEffsq = GetSQL(SQL.UC_FA_HOUSING_NEXT_EFFSEQ, &sInEMPLID, &sInInstitution, &sInAidYear, &sInCareer, &sInTerm);
+   
+   &bDummy = &sqlHousingNextEffsq.Fetch(&nResult);
+   &sqlHousingNextEffsq.Close();
+   
+   Return &nResult;
+   
+   
+end-method;
+
+/* SISRP-48596 start */
+method GetAidYear
+   /+ &sInInstitution as String +/
+   /+ Returns String +/
+   Local string &sOutAidYear = "";
+   
+   Local boolean &bDummy;
+   
+   Local SQL &sqlGetAidYear = GetSQL(SQL.UC_FA_SM_EST_AID_YEAR, &sInInstitution);
+   
+   &bDummy = &sqlGetAidYear.Fetch(&sOutAidYear);
+   &sqlGetAidYear.Close();
+   
+   Return &sOutAidYear;
+end-method;
+
+/* SISRP-48596 end */
